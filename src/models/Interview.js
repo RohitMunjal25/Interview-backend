@@ -117,9 +117,28 @@ const interviewSchema = new mongoose.Schema(
       default: null,
     },
 
+    proctoring: {
+      startedAt: {
+        type: Date,
+        default: null,
+      },
+      endedAt: {
+        type: Date,
+        default: null,
+      },
+      endReason: {
+        type: String,
+        default: null,
+      },
+      initialImageUrl: {
+        type: String,
+        default: null,
+      },
+    },
+
     status: {
       type: String,
-      enum: ["in_progress", "completed"],
+      enum: ["in_progress", "completed", "terminated"],
       default: "in_progress",
     },
   },

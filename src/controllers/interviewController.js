@@ -11,6 +11,7 @@ const {
 const { PDFParse } = require("pdf-parse");
 const mammoth = require("mammoth");
 const User = require("../models/User");
+const cloudinary = require("../config/cloudinary");
 
 
 // =====================================
@@ -242,11 +243,17 @@ const submitAnswer = async (req, res) => {
       });
     }
 
-    if (interview.status === "completed") {
+    if (interview.status !== "in_progress") {
       return res.status(400).json({
         success: false,
-        message:
-          "Interview already completed",
+        message: "Interview is no longer active",
+      });
+    }
+
+    if (!interview.proctoring?.startedAt) {
+      return res.status(400).json({
+        success: false,
+        message: "Interview has not been started",
       });
     }
 
@@ -490,6 +497,143 @@ const submitAnswer = async (req, res) => {
 
 
 
+
+// =====================================
+// START PROCTORING
+// =====================================
+
+const startProctoring = async (req, res) => {
+  try {
+    const { interviewId } = req.params;
+
+    const interview = await Interview.findOne({
+      _id: interviewId,
+      user: req.user._id,
+    });
+
+    if (!interview) {
+      return res.status(404).json({
+        success: false,
+        message: "Interview not found",
+      });
+    }
+
+    if (interview.status !== "in_progress") {
+      return res.status(400).json({
+        success: false,
+        message: "Interview cannot be started",
+      });
+    }
+
+    if (!req.file) {
+      return res.status(400).json({
+        success: false,
+        message: "Interview image is required",
+      });
+    }
+
+    const uploadResult = await new Promise((resolve, reject) => {
+      const uploadStream = cloudinary.uploader.upload_stream(
+        {
+          folder: "ai-interview/proctoring",
+          resource_type: "image",
+        },
+        (error, result) => {
+          if (error) return reject(error);
+          resolve(result);
+        }
+      );
+
+      uploadStream.end(req.file.buffer);
+    });
+
+    interview.proctoring = {
+      startedAt: new Date(),
+      endedAt: null,
+      endReason: null,
+      initialImageUrl: uploadResult.secure_url,
+    };
+
+    await interview.save();
+
+    return res.status(200).json({
+      success: true,
+      message: "Interview started successfully",
+      data: {
+        interviewId: interview._id,
+        startedAt: interview.proctoring.startedAt,
+        imageUrl: interview.proctoring.initialImageUrl,
+      },
+    });
+  } catch (error) {
+    console.error("Start Proctoring Error:", error);
+
+    return res.status(500).json({
+      success: false,
+      message: "Failed to start interview",
+    });
+  }
+};
+
+
+// =====================================
+// TERMINATE INTERVIEW
+// =====================================
+
+const terminateInterview = async (req, res) => {
+  try {
+    const { interviewId } = req.params;
+
+    const interview = await Interview.findOne({
+      _id: interviewId,
+      user: req.user._id,
+    });
+
+    if (!interview) {
+      return res.status(404).json({
+        success: false,
+        message: "Interview not found",
+      });
+    }
+
+    if (interview.status !== "in_progress") {
+      return res.status(400).json({
+        success: false,
+        message: "Interview is already ended",
+      });
+    }
+
+    interview.status = "terminated";
+
+    if (!interview.proctoring) {
+      interview.proctoring = {};
+    }
+
+    interview.proctoring.endedAt = new Date();
+    interview.proctoring.endReason =
+      req.body?.reason || "User switched browser tab";
+
+    await interview.save();
+
+    return res.status(200).json({
+      success: true,
+      message: "Interview terminated",
+      data: {
+        interviewId: interview._id,
+        status: interview.status,
+        reason: interview.proctoring.endReason,
+      },
+    });
+  } catch (error) {
+    console.error("Terminate Interview Error:", error);
+
+    return res.status(500).json({
+      success: false,
+      message: "Failed to terminate interview",
+    });
+  }
+};
+
 // =====================================
 // DOWNLOAD INTERVIEW REPORT
 // =====================================
@@ -557,4 +701,6 @@ module.exports = {
   generateQuestions,
   submitAnswer,
   downloadInterviewReport,
+  startProctoring,
+  terminateInterview,
 };

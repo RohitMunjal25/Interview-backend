@@ -8,13 +8,13 @@ const generateInterviewReport = async (interview) => {
   return new Promise((resolve, reject) => {
     const doc = new PDFDocument({
       margin: 50,
+      size: "A4",
+      bufferPages: true,
     });
 
     const chunks = [];
 
-    doc.on("data", (chunk) => {
-      chunks.push(chunk);
-    });
+    doc.on("data", (chunk) => chunks.push(chunk));
 
     doc.on("end", async () => {
       try {
@@ -27,9 +27,7 @@ const generateInterviewReport = async (interview) => {
             resource_type: "raw",
           },
           (error, result) => {
-            if (error) {
-              return reject(error);
-            }
+            if (error) return reject(error);
 
             resolve({
               fileName: `${fileName}.pdf`,
@@ -40,7 +38,6 @@ const generateInterviewReport = async (interview) => {
         );
 
         const stream = new PassThrough();
-
         stream.end(pdfBuffer);
         stream.pipe(uploadStream);
       } catch (error) {
@@ -50,178 +47,264 @@ const generateInterviewReport = async (interview) => {
 
     doc.on("error", reject);
 
-    // =========================
-    // TITLE
-    // =========================
+    const user = interview.user || {};
+    const candidateName = user.name || interview.candidateName || "Candidate";
+    const candidateEmail = user.email || interview.candidateEmail || "N/A";
+    const imageUrl = interview.proctoring?.initialImageUrl;
+
+    const section = (title) => {
+      doc.moveDown(0.8);
+      doc.fontSize(16).font("Helvetica-Bold").text(title);
+      doc.moveDown(0.35);
+      doc.font("Helvetica");
+    };
+
+    const line = () => {
+      doc.moveDown(0.2);
+      doc
+        .moveTo(50, doc.y)
+        .lineTo(545, doc.y)
+        .stroke();
+      doc.moveDown(0.4);
+    };
+
+    // HEADER
+    doc
+      .fontSize(24)
+      .font("Helvetica-Bold")
+      .text("AI Interview Analysis Report", { align: "center" });
 
     doc
-      .fontSize(22)
-      .text("AI Interview Analysis Report", {
+      .moveDown(0.3)
+      .fontSize(10)
+      .font("Helvetica")
+      .text("AI-powered interview performance assessment", {
         align: "center",
       });
 
-    doc.moveDown();
+    line();
+
+    // CANDIDATE DETAILS
+    section("Candidate Details");
+
+    if (imageUrl) {
+      try {
+        // PDFKit can load a remote image only through a URL in supported versions.
+        doc.image(imageUrl, 455, doc.y, {
+          fit: [90, 110],
+          align: "right",
+        });
+      } catch (error) {
+        console.error("Unable to add candidate image:", error.message);
+      }
+    }
+
+    doc.fontSize(11).font("Helvetica-Bold").text("Name:");
+    doc.font("Helvetica").text(candidateName);
+
+    doc.font("Helvetica-Bold").text("Email:");
+    doc.font("Helvetica").text(candidateEmail);
+
+    doc.font("Helvetica-Bold").text("Job Role:");
+    doc.font("Helvetica").text(interview.jobRole || "N/A");
+
+    doc.font("Helvetica-Bold").text("Interview ID:");
+    doc.font("Helvetica").text(String(interview._id));
+
+    doc.font("Helvetica-Bold").text("Interview Date:");
+    doc
+      .font("Helvetica")
+      .text(
+        interview.createdAt
+          ? new Date(interview.createdAt).toLocaleString()
+          : "N/A"
+      );
+
+    doc.moveDown(1.2);
+    line();
+
+    // OVERALL SCORE
+    section("Overall Performance");
 
     doc
-      .fontSize(12)
-      .text(`Job Role: ${interview.jobRole}`);
-
-    doc.text(`Interview ID: ${interview._id}`);
-
-    doc.moveDown();
-
-    // =========================
-    // SCORE
-    // =========================
+      .fontSize(22)
+      .font("Helvetica-Bold")
+      .text(`${interview.overallScore || 0}/100`, { align: "center" });
 
     doc
-      .fontSize(18)
-      .text(`Overall Score: ${interview.overallScore}/100`);
+      .moveDown(0.3)
+      .fontSize(13)
+      .font("Helvetica")
+      .text(
+        `Performance Level: ${
+          interview.finalReport?.performanceLevel || "N/A"
+        }`,
+        { align: "center" }
+      );
 
-    doc.moveDown();
-
-    // =========================
     // SUMMARY
-    // =========================
-
-    doc
-      .fontSize(16)
-      .text("Performance Summary");
-
-    doc.moveDown(0.5);
+    section("Performance Summary");
 
     doc
       .fontSize(11)
+      .font("Helvetica")
       .text(
-        interview.finalReport?.summary ||
-          "No summary available."
+        interview.finalReport?.summary || "No summary available.",
+        { lineGap: 4 }
       );
 
-    doc.moveDown();
+    // STRENGTHS
+    section("Strengths");
 
-    // =========================
-    // PERFORMANCE LEVEL
-    // =========================
+    const strengths = interview.strengths || [];
+    if (strengths.length === 0) {
+      doc.fontSize(11).text("No strengths recorded.");
+    } else {
+      strengths.forEach((item) => {
+        doc.fontSize(11).text(`• ${item}`, { lineGap: 2 });
+      });
+    }
+
+    // WEAKNESSES
+    section("Areas for Improvement");
+
+    const weaknesses = interview.weaknesses || [];
+    if (weaknesses.length === 0) {
+      doc.fontSize(11).text("No areas for improvement recorded.");
+    } else {
+      weaknesses.forEach((item) => {
+        doc.fontSize(11).text(`• ${item}`, { lineGap: 2 });
+      });
+    }
+
+    // RECOMMENDATIONS
+    section("Recommendations");
+
+    const recommendations = interview.recommendations || [];
+    if (recommendations.length === 0) {
+      doc.fontSize(11).text("No recommendations recorded.");
+    } else {
+      recommendations.forEach((item) => {
+        doc.fontSize(11).text(`• ${item}`, { lineGap: 2 });
+      });
+    }
+
+    // QUESTION-WISE ANALYSIS
+    section("Question-wise Analysis");
+
+    (interview.questions || []).forEach((q, index) => {
+      if (doc.y > 680) doc.addPage();
+
+      doc
+        .fontSize(13)
+        .font("Helvetica-Bold")
+        .text(`Question ${index + 1}`);
+
+      doc
+        .fontSize(11)
+        .font("Helvetica-Bold")
+        .text("Question:");
+
+      doc
+        .font("Helvetica")
+        .text(q.question || "N/A", { lineGap: 3 });
+
+      doc
+        .moveDown(0.25)
+        .font("Helvetica-Bold")
+        .text("Your Answer:");
+
+      doc
+        .font("Helvetica")
+        .text(
+          q.answer?.trim() || "No answer provided.",
+          { lineGap: 3 }
+        );
+
+      doc.moveDown(0.25);
+
+      doc.font("Helvetica-Bold").text("Answer Type:");
+      doc.font("Helvetica").text(q.type || "N/A");
+
+      doc.font("Helvetica-Bold").text("Answer Mode:");
+      doc.font("Helvetica").text(q.answerMode || "text");
+
+      doc.moveDown(0.2);
+
+      doc.font("Helvetica-Bold").text("Evaluation:");
+      doc
+        .font("Helvetica")
+        .text(`Overall Score: ${q.evaluation?.score || 0}/100`)
+        .text(`Correctness: ${q.evaluation?.correctness || 0}/100`)
+        .text(`Relevance: ${q.evaluation?.relevance || 0}/100`)
+        .text(`Communication: ${q.evaluation?.communication || 0}/100`)
+        .text(`Filler Words: ${q.evaluation?.fillerWords || 0}`);
+
+      doc.moveDown(0.2);
+
+      doc.font("Helvetica-Bold").text("AI Feedback:");
+      doc
+        .font("Helvetica")
+        .text(
+          q.evaluation?.feedback || "No feedback available.",
+          { lineGap: 3 }
+        );
+
+      line();
+    });
+
+    // PROCTORING
+    section("Interview Proctoring");
 
     doc
-      .fontSize(14)
+      .fontSize(11)
+      .font("Helvetica")
       .text(
-        `Performance Level: ${
-          interview.finalReport?.performanceLevel ||
-          "N/A"
+        `Started At: ${
+          interview.proctoring?.startedAt
+            ? new Date(interview.proctoring.startedAt).toLocaleString()
+            : "N/A"
+        }`
+      )
+      .text(
+        `Ended At: ${
+          interview.proctoring?.endedAt
+            ? new Date(interview.proctoring.endedAt).toLocaleString()
+            : "N/A"
+        }`
+      )
+      .text(
+        `End Reason: ${
+          interview.proctoring?.endReason || "Completed normally"
         }`
       );
 
-    doc.moveDown();
+    if (imageUrl) {
+      doc
+        .moveDown(0.4)
+        .font("Helvetica-Bold")
+        .text("Interview Start Capture:");
 
-    // =========================
-    // STRENGTHS
-    // =========================
-
-    doc.fontSize(16).text("Strengths");
-
-    doc.moveDown(0.5);
-
-    (interview.strengths || []).forEach((item) => {
-      doc.fontSize(11).text(`• ${item}`);
-    });
-
-    doc.moveDown();
-
-    // =========================
-    // WEAKNESSES
-    // =========================
-
-    doc
-      .fontSize(16)
-      .text("Areas for Improvement");
-
-    doc.moveDown(0.5);
-
-    (interview.weaknesses || []).forEach((item) => {
-      doc.fontSize(11).text(`• ${item}`);
-    });
-
-    doc.moveDown();
-
-    // =========================
-    // RECOMMENDATIONS
-    // =========================
-
-    doc.fontSize(16).text("Recommendations");
-
-    doc.moveDown(0.5);
-
-    (interview.recommendations || []).forEach(
-      (item) => {
-        doc.fontSize(11).text(`• ${item}`);
+      try {
+        doc.image(imageUrl, {
+          fit: [180, 180],
+          align: "left",
+        });
+      } catch (error) {
+        doc
+          .font("Helvetica")
+          .text("Captured image could not be embedded in the PDF.");
       }
-    );
-
-    doc.moveDown();
-
-    // =========================
-    // QUESTION-WISE ANALYSIS
-    // =========================
+    }
 
     doc
-      .fontSize(16)
-      .text("Question-wise Performance");
-
-    doc.moveDown();
-
-    interview.questions.forEach((q, index) => {
-      doc
-        .fontSize(12)
-        .text(`${index + 1}. ${q.question}`);
-
-      doc
-        .fontSize(10)
-        .text(`Type: ${q.type}`);
-
-      doc
-        .fontSize(10)
-        .text(
-          `Score: ${
-            q.evaluation?.score || 0
-          }/100`
-        );
-
-      doc
-        .fontSize(10)
-        .text(
-          `Correctness: ${
-            q.evaluation?.correctness || 0
-          }/100`
-        );
-
-      doc
-        .fontSize(10)
-        .text(
-          `Relevance: ${
-            q.evaluation?.relevance || 0
-          }/100`
-        );
-
-      doc
-        .fontSize(10)
-        .text(
-          `Communication: ${
-            q.evaluation?.communication || 0
-          }/100`
-        );
-
-      doc
-        .fontSize(10)
-        .text(
-          `Feedback: ${
-            q.evaluation?.feedback ||
-            "No feedback available."
-          }`
-        );
-
-      doc.moveDown();
-    });
+      .moveDown(1)
+      .fontSize(9)
+      .font("Helvetica")
+      .text(
+        "Generated automatically by AI Interview Analyzer.",
+        { align: "center" }
+      );
 
     doc.end();
   });

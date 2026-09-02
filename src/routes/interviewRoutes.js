@@ -2,12 +2,22 @@ const express = require("express");
 
 const protect = require("../middleware/authMiddleware");
 const upload = require("../middleware/uploadMiddleware");
+const multer = require("multer");
+
+const proctorUpload = multer({
+  storage: multer.memoryStorage(),
+  limits: {
+    fileSize: 5 * 1024 * 1024,
+  },
+});
 
 const {
   uploadResume,
   generateQuestions,
   submitAnswer,
   downloadInterviewReport,
+  startProctoring,
+  terminateInterview,
 } = require("../controllers/interviewController");
 
 const router = express.Router();
@@ -187,6 +197,98 @@ router.post(
  *       500:
  *         description: Failed to download interview report
  */
+
+/**
+ * @swagger
+ * /api/interview/{interviewId}/proctor/start:
+ *   post:
+ *     tags:
+ *       - Interview
+ *     summary: Start interview proctoring
+ *     description: Upload the initial webcam capture to Cloudinary and save its URL in the interview record.
+ *     security:
+ *       - bearerAuth: []
+ *     parameters:
+ *       - in: path
+ *         name: interviewId
+ *         required: true
+ *         schema:
+ *           type: string
+ *     requestBody:
+ *       required: true
+ *       content:
+ *         multipart/form-data:
+ *           schema:
+ *             type: object
+ *             required:
+ *               - image
+ *             properties:
+ *               image:
+ *                 type: string
+ *                 format: binary
+ *     responses:
+ *       200:
+ *         description: Interview started and webcam image saved
+ *       400:
+ *         description: Interview cannot be started or image is missing
+ *       401:
+ *         description: Authentication required
+ *       404:
+ *         description: Interview not found
+ *       500:
+ *         description: Failed to start interview
+ */
+router.post(
+  "/:interviewId/proctor/start",
+  protect,
+  proctorUpload.single("image"),
+  startProctoring
+);
+
+/**
+ * @swagger
+ * /api/interview/{interviewId}/proctor/terminate:
+ *   post:
+ *     tags:
+ *       - Interview
+ *     summary: Terminate interview
+ *     description: Terminate an active interview, for example when the user switches browser tabs.
+ *     security:
+ *       - bearerAuth: []
+ *     parameters:
+ *       - in: path
+ *         name: interviewId
+ *         required: true
+ *         schema:
+ *           type: string
+ *     requestBody:
+ *       required: false
+ *       content:
+ *         application/json:
+ *           schema:
+ *             type: object
+ *             properties:
+ *               reason:
+ *                 type: string
+ *                 example: User switched browser tab
+ *     responses:
+ *       200:
+ *         description: Interview terminated
+ *       400:
+ *         description: Interview is already ended
+ *       401:
+ *         description: Authentication required
+ *       404:
+ *         description: Interview not found
+ *       500:
+ *         description: Failed to terminate interview
+ */
+router.post(
+  "/:interviewId/proctor/terminate",
+  protect,
+  terminateInterview
+);
+
 router.get(
   "/:interviewId/report/download",
   protect,
