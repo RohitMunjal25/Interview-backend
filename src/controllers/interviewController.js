@@ -411,8 +411,10 @@ const submitAnswer = async (req, res) => {
 
 
     // =====================================
-    // GENERATE + UPLOAD PDF
+    // POPULATE CANDIDATE + GENERATE PDF
     // =====================================
+
+    await interview.populate("user", "name email");
 
     const pdf =
       await generateInterviewReport(
@@ -441,6 +443,15 @@ const submitAnswer = async (req, res) => {
         interviewId:
           interview._id,
 
+        candidate: {
+          name: interview.user?.name || req.user.name,
+          email: interview.user?.email || req.user.email,
+        },
+
+        jobRole: interview.jobRole,
+
+        interviewDate: interview.createdAt,
+
         overallScore:
           interview.overallScore,
 
@@ -465,7 +476,9 @@ const submitAnswer = async (req, res) => {
             : interview.questions.map((q, index) => ({
                 questionIndex: index + 1,
                 question: q.question,
+                answer: q.answer || "",
                 type: q.type,
+                answerMode: q.answerMode || "text",
                 score: q.evaluation?.score || 0,
                 correctness: q.evaluation?.correctness || 0,
                 relevance: q.evaluation?.relevance || 0,
@@ -635,6 +648,77 @@ const terminateInterview = async (req, res) => {
 };
 
 // =====================================
+// GET INTERVIEW REPORT JSON
+// =====================================
+
+const getInterviewReport = async (req, res) => {
+  try {
+    const { interviewId } = req.params;
+
+    const interview = await Interview.findOne({
+      _id: interviewId,
+      user: req.user._id,
+      status: "completed",
+    }).populate("user", "name email");
+
+    if (!interview) {
+      return res.status(404).json({
+        success: false,
+        message: "Completed interview not found",
+      });
+    }
+
+    const questionEvaluations = interview.questions.map((q, index) => ({
+      questionIndex: index + 1,
+      question: q.question,
+      answer: q.answer || "",
+      type: q.type,
+      answerMode: q.answerMode || "text",
+      score: q.evaluation?.score || 0,
+      correctness: q.evaluation?.correctness || 0,
+      relevance: q.evaluation?.relevance || 0,
+      communication: q.evaluation?.communication || 0,
+      feedback: q.evaluation?.feedback || "",
+      fillerWords: q.evaluation?.fillerWords || 0,
+    }));
+
+    return res.status(200).json({
+      success: true,
+      data: {
+        interviewId: interview._id,
+        candidate: {
+          name: interview.user?.name || "Candidate",
+          email: interview.user?.email || "N/A",
+        },
+        jobRole: interview.jobRole,
+        interviewDate: interview.createdAt,
+        overallScore: interview.overallScore,
+        performanceLevel: interview.finalReport?.performanceLevel || "",
+        summary: interview.finalReport?.summary || "",
+        strengths: interview.strengths || [],
+        weaknesses: interview.weaknesses || [],
+        recommendations: interview.recommendations || [],
+        questionEvaluations,
+        proctoring: {
+          startedAt: interview.proctoring?.startedAt || null,
+          endedAt: interview.proctoring?.endedAt || null,
+          endReason: interview.proctoring?.endReason || "Completed normally",
+          initialImageUrl: interview.proctoring?.initialImageUrl || null,
+        },
+        reportUrl: interview.reportUrl || null,
+      },
+    });
+  } catch (error) {
+    console.error("Get Interview Report Error:", error);
+
+    return res.status(500).json({
+      success: false,
+      message: "Failed to fetch interview report",
+    });
+  }
+};
+
+// =====================================
 // DOWNLOAD INTERVIEW REPORT
 // =====================================
 
@@ -701,6 +785,7 @@ module.exports = {
   generateQuestions,
   submitAnswer,
   downloadInterviewReport,
+  getInterviewReport,
   startProctoring,
   terminateInterview,
 };

@@ -16,6 +16,7 @@ const {
   generateQuestions,
   submitAnswer,
   downloadInterviewReport,
+  getInterviewReport,
   startProctoring,
   terminateInterview,
 } = require("../controllers/interviewController");
@@ -301,8 +302,8 @@ router.get(
  *   get:
  *     tags:
  *       - Interview
- *     summary: Download interview report
- *     description: Download the completed interview report as a PDF file.
+ *     summary: Get interview report JSON
+ *     description: Get the complete completed interview report as JSON.
  *     security:
  *       - bearerAuth: []
  *     parameters:
@@ -315,12 +316,11 @@ router.get(
  *         example: 68a97e92ea9083b47a32d6151
  *     responses:
  *       200:
- *         description: Interview report PDF
+ *         description: Complete interview report JSON
  *         content:
- *           application/pdf:
+ *           application/json:
  *             schema:
- *               type: string
- *               format: binary
+ *               type: object
  *       400:
  *         description: Invalid interview ID
  *       401:
@@ -335,7 +335,7 @@ router.get(
 router.get(
   "/:interviewId/report",
   protect,
-  downloadInterviewReport
+  getInterviewReport
 );
 
 module.exports = router;

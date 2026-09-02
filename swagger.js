@@ -8,20 +8,20 @@ const options = {
       title: "AI Interview Analyzer API",
       version: "1.0.0",
       description:
-        "Complete backend API documentation for AI Interview Analyzer",
+        "Production API documentation for AI Interview Analyzer",
     },
 
     servers: [
       {
-        url: "http://localhost:5000",
-        description: "Local Development",
+        url: "https://anytime-leone-calendars-respond.trycloudflare.com",
+        description: "Production / Cloudflare Quick Tunnel",
       },
     ],
 
     tags: [
       {
         name: "Authentication",
-        description: "Signup, email verification, login and password APIs",
+        description: "Signup, verification, login and password APIs",
       },
       {
         name: "User",
@@ -29,7 +29,8 @@ const options = {
       },
       {
         name: "Interview",
-        description: "Resume upload, AI questions, answers and interview reports",
+        description:
+          "Resume upload, AI questions, proctoring, answers and reports",
       },
     ],
 
@@ -39,8 +40,7 @@ const options = {
           type: "http",
           scheme: "bearer",
           bearerFormat: "JWT",
-          description:
-            "Enter JWT token only. Example: eyJhbGciOiJIUzI1NiIs...",
+          description: "Enter JWT token as: Bearer <token>",
         },
       },
 
@@ -49,10 +49,7 @@ const options = {
           type: "object",
           required: ["name", "email", "password"],
           properties: {
-            name: {
-              type: "string",
-              example: "Rohit Munjal",
-            },
+            name: { type: "string", example: "Rohit Munjal" },
             email: {
               type: "string",
               format: "email",
@@ -75,10 +72,7 @@ const options = {
               format: "email",
               example: "rohit@example.com",
             },
-            otp: {
-              type: "string",
-              example: "123456",
-            },
+            otp: { type: "string", example: "123456" },
           },
         },
 
@@ -119,10 +113,7 @@ const options = {
               format: "email",
               example: "rohit@example.com",
             },
-            otp: {
-              type: "string",
-              example: "123456",
-            },
+            otp: { type: "string", example: "123456" },
             newPassword: {
               type: "string",
               minLength: 6,
@@ -142,35 +133,7 @@ const options = {
             answer: {
               type: "string",
               example:
-                "I used Next.js because it provides server-side rendering, routing and good performance.",
-            },
-          },
-        },
-
-        ApiSuccess: {
-          type: "object",
-          properties: {
-            success: {
-              type: "boolean",
-              example: true,
-            },
-            message: {
-              type: "string",
-              example: "Request successful",
-            },
-          },
-        },
-
-        ApiError: {
-          type: "object",
-          properties: {
-            success: {
-              type: "boolean",
-              example: false,
-            },
-            message: {
-              type: "string",
-              example: "Something went wrong",
+                "I used React because it provides reusable components and efficient UI updates.",
             },
           },
         },
@@ -178,9 +141,7 @@ const options = {
     },
   },
 
-  apis: [
-    "./src/routes/*.js",
-  ],
+  apis: ["./src/routes/*.js"],
 };
 
 module.exports = swaggerJsdoc(options);

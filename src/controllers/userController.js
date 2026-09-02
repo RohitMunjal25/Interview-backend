@@ -4,8 +4,10 @@ const getDashboard = async (req, res) => {
   try {
     const userId = req.user._id;
 
+    // Dashboard attempts should count only completed interviews.
     const totalInterviews = await Interview.countDocuments({
       user: userId,
+      status: "completed",
     });
 
     const completedInterviews = await Interview.countDocuments({

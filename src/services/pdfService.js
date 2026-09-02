@@ -1,9 +1,40 @@
 const PDFDocument = require("pdfkit");
 const cloudinary = require("../config/cloudinary");
 const { PassThrough } = require("stream");
+const User = require("../models/User");
+
+const fetchImageBuffer = async (imageUrl) => {
+  if (!imageUrl) return null;
+
+  try {
+    const response = await fetch(imageUrl);
+
+    if (!response.ok) {
+      throw new Error(`Image request failed with status ${response.status}`);
+    }
+
+    return Buffer.from(await response.arrayBuffer());
+  } catch (error) {
+    console.error("Unable to fetch proctoring image:", error.message);
+    return null;
+  }
+};
 
 const generateInterviewReport = async (interview) => {
   const fileName = `interview-report-${interview._id}`;
+
+  let user = interview.user || {};
+
+  if (interview.user && (!user.name || !user.email)) {
+    user = (await User.findById(interview.user).select("name email").lean()) || {};
+  }
+
+  const candidateName =
+    user.name || interview.candidateName || "Candidate";
+  const candidateEmail =
+    user.email || interview.candidateEmail || "N/A";
+  const imageUrl = interview.proctoring?.initialImageUrl;
+  const imageBuffer = await fetchImageBuffer(imageUrl);
 
   return new Promise((resolve, reject) => {
     const doc = new PDFDocument({
@@ -47,10 +78,6 @@ const generateInterviewReport = async (interview) => {
 
     doc.on("error", reject);
 
-    const user = interview.user || {};
-    const candidateName = user.name || interview.candidateName || "Candidate";
-    const candidateEmail = user.email || interview.candidateEmail || "N/A";
-    const imageUrl = interview.proctoring?.initialImageUrl;
 
     const section = (title) => {
       doc.moveDown(0.8);
@@ -87,10 +114,9 @@ const generateInterviewReport = async (interview) => {
     // CANDIDATE DETAILS
     section("Candidate Details");
 
-    if (imageUrl) {
+    if (imageBuffer) {
       try {
-        // PDFKit can load a remote image only through a URL in supported versions.
-        doc.image(imageUrl, 455, doc.y, {
+        doc.image(imageBuffer, 455, doc.y, {
           fit: [90, 110],
           align: "right",
         });
@@ -279,14 +305,14 @@ const generateInterviewReport = async (interview) => {
         }`
       );
 
-    if (imageUrl) {
+    if (imageBuffer) {
       doc
         .moveDown(0.4)
         .font("Helvetica-Bold")
         .text("Interview Start Capture:");
 
       try {
-        doc.image(imageUrl, {
+        doc.image(imageBuffer, {
           fit: [180, 180],
           align: "left",
         });
