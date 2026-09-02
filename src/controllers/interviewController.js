@@ -14,14 +14,9 @@ const mammoth = require("mammoth");
 const User = require("../models/User");
 const cloudinary = require("../config/cloudinary");
 
-// Active interview data stays in memory until the interview is completed.
-// This prevents incomplete interviews from being stored in MongoDB.
-const activeInterviews = new Map();
-
-const getSessionKey = (userId, interviewId) =>
-  `${String(userId)}:${String(interviewId)}`;
-
-
+// Interview data is persisted in MongoDB from the moment questions are generated.
+// Incomplete/terminated records are automatically removed after 24 hours by the
+// TTL index defined in the Interview model.
 // =====================================
 // UPLOAD RESUME
 // =====================================
@@ -192,7 +187,6 @@ const generateQuestions = async (req, res) => {
         questionCount
       );
 
-    const interviewId = new mongoose.Types.ObjectId();
     const sessionQuestions = questions.map((question) => ({
       ...question,
       _id: new mongoose.Types.ObjectId(),
@@ -200,25 +194,18 @@ const generateQuestions = async (req, res) => {
       answerMode: question.answerMode || "text",
     }));
 
-    activeInterviews.set(
-      getSessionKey(user._id, interviewId),
-      {
-        _id: interviewId,
-        user: user._id,
-        jobRole,
-        difficulty,
-        questionCount,
-        resumeText: user.resume.extractedText,
-        questions: sessionQuestions,
-        proctoring: {
-          startedAt: null,
-          endedAt: null,
-          endReason: null,
-          initialImageUrl: null,
-        },
-        status: "in_progress",
-      }
-    );
+    // Save the interview immediately. This keeps pending interviews available
+    // after refresh/reconnect. MongoDB TTL removes incomplete/terminated records
+    // automatically after 24 hours.
+    const interview = await Interview.create({
+      user: user._id,
+      jobRole,
+      difficulty,
+      questionCount,
+      resumeText: user.resume.extractedText,
+      questions: sessionQuestions,
+      status: "in_progress",
+    });
 
     return res.status(201).json({
       success: true,
@@ -271,8 +258,10 @@ const submitAnswer = async (req, res) => {
       });
     }
 
-    const sessionKey = getSessionKey(req.user._id, interviewId);
-    const interview = activeInterviews.get(sessionKey);
+    const interview = await Interview.findOne({
+      _id: interviewId,
+      user: req.user._id,
+    });
 
     if (!interview) {
       return res.status(404).json({
@@ -306,11 +295,10 @@ const submitAnswer = async (req, res) => {
       });
     }
 
-    // Save answer
+    // Save every answer immediately so refresh/reconnect does not lose progress.
     question.answer = answer.trim();
     question.answerMode = "text";
-
-    // Keep the answer in memory until the interview is completed.
+    await interview.save();
 
     // Find next unanswered question
     const nextQuestion =
@@ -364,7 +352,7 @@ const submitAnswer = async (req, res) => {
 
 
     // =====================================
-    // ALL 10 QUESTIONS COMPLETED
+    // ALL QUESTIONS COMPLETED
     // =====================================
 
     console.log(
@@ -448,40 +436,27 @@ const submitAnswer = async (req, res) => {
     interview.proctoring.endedAt = new Date();
     interview.proctoring.endReason = "Completed normally";
 
-    // Persist ONLY the completed interview.
-    const completedInterview = await Interview.create({
-      user: interview.user,
-      jobRole: interview.jobRole,
-      difficulty: interview.difficulty,
-      questionCount: interview.questionCount,
-      resumeText: interview.resumeText,
-      questions: interview.questions,
-      overallScore: interview.overallScore,
-      strengths: interview.strengths,
-      weaknesses: interview.weaknesses,
-      recommendations: interview.recommendations,
-      finalReport: interview.finalReport,
-      proctoring: interview.proctoring,
-      status: "completed",
-    });
-
-    activeInterviews.delete(sessionKey);
+    // Convert the same MongoDB record from in_progress to completed.
+    // Once status becomes completed, the 24-hour TTL rule no longer applies.
+    await interview.save();
 
     // =====================================
     // POPULATE CANDIDATE + GENERATE PDF
     // =====================================
 
-    await completedInterview.populate("user", "name email");
+    await interview.populate("user", "name email");
 
     const pdf =
       await generateInterviewReport(
-        completedInterview
+        interview
       );
 
-    completedInterview.reportUrl =
+    interview.reportUrl =
       pdf.reportUrl;
 
-    await completedInterview.save();
+    await interview.save();
+
+    const completedInterview = interview;
 
 
     // =====================================
@@ -575,8 +550,10 @@ const submitAnswer = async (req, res) => {
 const startProctoring = async (req, res) => {
   try {
     const { interviewId } = req.params;
-    const sessionKey = getSessionKey(req.user._id, interviewId);
-    const interview = activeInterviews.get(sessionKey);
+    const interview = await Interview.findOne({
+      _id: interviewId,
+      user: req.user._id,
+    });
 
     if (!interview) {
       return res.status(404).json({
@@ -621,6 +598,8 @@ const startProctoring = async (req, res) => {
       initialImageUrl: uploadResult.secure_url,
     };
 
+    await interview.save();
+
     return res.status(200).json({
       success: true,
       message: "Interview started successfully",
@@ -648,8 +627,10 @@ const startProctoring = async (req, res) => {
 const terminateInterview = async (req, res) => {
   try {
     const { interviewId } = req.params;
-    const sessionKey = getSessionKey(req.user._id, interviewId);
-    const interview = activeInterviews.get(sessionKey);
+    const interview = await Interview.findOne({
+      _id: interviewId,
+      user: req.user._id,
+    });
 
     if (!interview) {
       return res.status(404).json({
@@ -670,8 +651,9 @@ const terminateInterview = async (req, res) => {
     interview.proctoring.endReason =
       req.body?.reason || "User switched browser tab";
 
-    // Terminated/incomplete interviews are never persisted.
-    activeInterviews.delete(sessionKey);
+    // Keep the terminated record for 24 hours for debugging/recovery.
+    // MongoDB TTL will automatically delete it afterwards.
+    await interview.save();
 
     return res.status(200).json({
       success: true,
