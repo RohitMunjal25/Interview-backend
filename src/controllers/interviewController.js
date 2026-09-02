@@ -1,8 +1,8 @@
+const mongoose = require("mongoose");
 const Interview = require("../models/Interview");
 const {
   generateInterviewQuestions,
   generateFinalReport,
-  validateFrontFaceImage,
 } = require("../services/geminiService");
 
 const {
@@ -13,6 +13,13 @@ const { PDFParse } = require("pdf-parse");
 const mammoth = require("mammoth");
 const User = require("../models/User");
 const cloudinary = require("../config/cloudinary");
+
+// Active interview data stays in memory until the interview is completed.
+// This prevents incomplete interviews from being stored in MongoDB.
+const activeInterviews = new Map();
+
+const getSessionKey = (userId, interviewId) =>
+  `${String(userId)}:${String(interviewId)}`;
 
 
 // =====================================
@@ -185,17 +192,33 @@ const generateQuestions = async (req, res) => {
         questionCount
       );
 
-    const interview =
-      await Interview.create({
+    const interviewId = new mongoose.Types.ObjectId();
+    const sessionQuestions = questions.map((question) => ({
+      ...question,
+      _id: new mongoose.Types.ObjectId(),
+      answer: question.answer || "",
+      answerMode: question.answerMode || "text",
+    }));
+
+    activeInterviews.set(
+      getSessionKey(user._id, interviewId),
+      {
+        _id: interviewId,
         user: user._id,
         jobRole,
         difficulty,
         questionCount,
-        resumeText:
-          user.resume.extractedText,
-        questions,
+        resumeText: user.resume.extractedText,
+        questions: sessionQuestions,
+        proctoring: {
+          startedAt: null,
+          endedAt: null,
+          endReason: null,
+          initialImageUrl: null,
+        },
         status: "in_progress",
-      });
+      }
+    );
 
     return res.status(201).json({
       success: true,
@@ -203,11 +226,10 @@ const generateQuestions = async (req, res) => {
         "Interview questions generated successfully",
 
       data: {
-        interviewId: interview._id,
-        jobRole: interview.jobRole,
-        totalQuestions:
-          interview.questions.length,
-        questions: interview.questions,
+        interviewId,
+        jobRole,
+        totalQuestions: sessionQuestions.length,
+        questions: sessionQuestions,
       },
     });
 
@@ -249,11 +271,8 @@ const submitAnswer = async (req, res) => {
       });
     }
 
-    const interview =
-      await Interview.findOne({
-        _id: interviewId,
-        user: req.user._id,
-      });
+    const sessionKey = getSessionKey(req.user._id, interviewId);
+    const interview = activeInterviews.get(sessionKey);
 
     if (!interview) {
       return res.status(404).json({
@@ -276,8 +295,9 @@ const submitAnswer = async (req, res) => {
       });
     }
 
-    const question =
-      interview.questions.id(questionId);
+    const question = interview.questions.find(
+      (item) => String(item._id) === String(questionId)
+    );
 
     if (!question) {
       return res.status(404).json({
@@ -290,7 +310,7 @@ const submitAnswer = async (req, res) => {
     question.answer = answer.trim();
     question.answerMode = "text";
 
-    await interview.save();
+    // Keep the answer in memory until the interview is completed.
 
     // Find next unanswered question
     const nextQuestion =
@@ -425,25 +445,43 @@ const submitAnswer = async (req, res) => {
     };
 
     interview.status = "completed";
+    interview.proctoring.endedAt = new Date();
+    interview.proctoring.endReason = "Completed normally";
 
-    await interview.save();
+    // Persist ONLY the completed interview.
+    const completedInterview = await Interview.create({
+      user: interview.user,
+      jobRole: interview.jobRole,
+      difficulty: interview.difficulty,
+      questionCount: interview.questionCount,
+      resumeText: interview.resumeText,
+      questions: interview.questions,
+      overallScore: interview.overallScore,
+      strengths: interview.strengths,
+      weaknesses: interview.weaknesses,
+      recommendations: interview.recommendations,
+      finalReport: interview.finalReport,
+      proctoring: interview.proctoring,
+      status: "completed",
+    });
 
+    activeInterviews.delete(sessionKey);
 
     // =====================================
     // POPULATE CANDIDATE + GENERATE PDF
     // =====================================
 
-    await interview.populate("user", "name email");
+    await completedInterview.populate("user", "name email");
 
     const pdf =
       await generateInterviewReport(
-        interview
+        completedInterview
       );
 
-    interview.reportUrl =
+    completedInterview.reportUrl =
       pdf.reportUrl;
 
-    await interview.save();
+    await completedInterview.save();
 
 
     // =====================================
@@ -460,19 +498,19 @@ const submitAnswer = async (req, res) => {
         completed: true,
 
         interviewId:
-          interview._id,
+          completedInterview._id,
 
         candidate: {
-          name: interview.user?.name || req.user.name,
-          email: interview.user?.email || req.user.email,
+          name: completedInterview.user?.name || req.user.name,
+          email: completedInterview.user?.email || req.user.email,
         },
 
-        jobRole: interview.jobRole,
+        jobRole: completedInterview.jobRole,
 
-        interviewDate: interview.createdAt,
+        interviewDate: completedInterview.createdAt,
 
         overallScore:
-          interview.overallScore,
+          completedInterview.overallScore,
 
         performanceLevel:
           report.performanceLevel,
@@ -492,7 +530,7 @@ const submitAnswer = async (req, res) => {
         questionEvaluations:
           Array.isArray(report.questionEvaluations)
             ? report.questionEvaluations
-            : interview.questions.map((q, index) => ({
+            : completedInterview.questions.map((q, index) => ({
                 questionIndex: index + 1,
                 question: q.question,
                 answer: q.answer || "",
@@ -507,7 +545,7 @@ const submitAnswer = async (req, res) => {
               })),
 
         reportUrl:
-          interview.reportUrl,
+          completedInterview.reportUrl,
       },
     });
 
@@ -537,11 +575,8 @@ const submitAnswer = async (req, res) => {
 const startProctoring = async (req, res) => {
   try {
     const { interviewId } = req.params;
-
-    const interview = await Interview.findOne({
-      _id: interviewId,
-      user: req.user._id,
-    });
+    const sessionKey = getSessionKey(req.user._id, interviewId);
+    const interview = activeInterviews.get(sessionKey);
 
     if (!interview) {
       return res.status(404).json({
@@ -564,25 +599,6 @@ const startProctoring = async (req, res) => {
       });
     }
 
-    // Validate the actual webcam image BEFORE uploading it.
-    // Only one clearly visible, centered, front-facing face is accepted.
-    const faceValidation = await validateFrontFaceImage(
-      req.file.buffer,
-      req.file.mimetype || "image/jpeg"
-    );
-
-    if (!faceValidation.valid) {
-      return res.status(400).json({
-        success: false,
-        message:
-          faceValidation.message ||
-          "Please show one clear, front-facing face to the camera.",
-        code: faceValidation.code,
-        faceCount: faceValidation.faceCount,
-      });
-    }
-
-    // Upload ONLY the verified image.
     const uploadResult = await new Promise((resolve, reject) => {
       const uploadStream = cloudinary.uploader.upload_stream(
         {
@@ -605,16 +621,13 @@ const startProctoring = async (req, res) => {
       initialImageUrl: uploadResult.secure_url,
     };
 
-    await interview.save();
-
     return res.status(200).json({
       success: true,
-      message: "Front-facing face verified and interview started successfully",
+      message: "Interview started successfully",
       data: {
         interviewId: interview._id,
         startedAt: interview.proctoring.startedAt,
         imageUrl: interview.proctoring.initialImageUrl,
-        faceVerified: true,
       },
     });
   } catch (error) {
@@ -627,6 +640,7 @@ const startProctoring = async (req, res) => {
   }
 };
 
+
 // =====================================
 // TERMINATE INTERVIEW
 // =====================================
@@ -634,11 +648,8 @@ const startProctoring = async (req, res) => {
 const terminateInterview = async (req, res) => {
   try {
     const { interviewId } = req.params;
-
-    const interview = await Interview.findOne({
-      _id: interviewId,
-      user: req.user._id,
-    });
+    const sessionKey = getSessionKey(req.user._id, interviewId);
+    const interview = activeInterviews.get(sessionKey);
 
     if (!interview) {
       return res.status(404).json({
@@ -655,23 +666,19 @@ const terminateInterview = async (req, res) => {
     }
 
     interview.status = "terminated";
-
-    if (!interview.proctoring) {
-      interview.proctoring = {};
-    }
-
     interview.proctoring.endedAt = new Date();
     interview.proctoring.endReason =
       req.body?.reason || "User switched browser tab";
 
-    await interview.save();
+    // Terminated/incomplete interviews are never persisted.
+    activeInterviews.delete(sessionKey);
 
     return res.status(200).json({
       success: true,
       message: "Interview terminated",
       data: {
-        interviewId: interview._id,
-        status: interview.status,
+        interviewId,
+        status: "terminated",
         reason: interview.proctoring.endReason,
       },
     });
