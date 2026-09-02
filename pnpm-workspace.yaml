@@ -1,0 +1,7 @@
+allowBuilds:
+  '@google/genai': true
+  '@scarf/scarf': true
+  protobufjs: false
+minimumReleaseAgeExclude:
+  - '@google/genai@2.20.0'
+  - nodemailer@9.1.1
