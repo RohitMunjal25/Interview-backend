@@ -213,7 +213,7 @@ const generateQuestions = async (req, res) => {
         "Interview questions generated successfully",
 
       data: {
-        interviewId,
+        interviewId: interview._id,
         jobRole,
         totalQuestions: sessionQuestions.length,
         questions: sessionQuestions,
