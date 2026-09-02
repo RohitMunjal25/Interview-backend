@@ -100,6 +100,122 @@ Requirements:
 
 
 // =====================================
+// FRONT-FACE PROCTORING VALIDATION
+// =====================================
+const validateFrontFaceImage = async (imageBuffer, mimeType = "image/jpeg") => {
+  const ai = await getGeminiClient();
+
+  if (!imageBuffer || !Buffer.isBuffer(imageBuffer) || imageBuffer.length < 1000) {
+    return {
+      valid: false,
+      code: "INVALID_OR_EMPTY_IMAGE",
+      message: "Camera image is empty or invalid. Please enable the camera and try again.",
+    };
+  }
+
+  const base64Image = imageBuffer.toString("base64");
+
+  const prompt = `
+Analyze this webcam image ONLY for interview proctoring.
+
+Return ONLY valid JSON.
+
+The image is acceptable ONLY when ALL conditions are true:
+1. Exactly ONE human face is clearly visible.
+2. The face is the candidate's front-facing face.
+3. The person is looking approximately directly toward the camera.
+4. The face is reasonably centered and clearly visible.
+5. The image is not black, blank, severely dark, corrupted, or empty.
+6. There are no additional human faces.
+
+Reject the image when:
+- no face is visible
+- more than one face is visible
+- the face is strongly turned left or right
+- the face is strongly tilted/up/down
+- the face is too small or unclear
+- the image is black/blank/dark enough that a face cannot be verified
+
+Do NOT identify the person.
+Do NOT infer identity.
+Do NOT compare the face with any stored identity.
+
+Return exactly:
+{
+  "valid": true | false,
+  "faceCount": number,
+  "frontFacing": true | false,
+  "centered": true | false,
+  "imageUsable": true | false,
+  "code": "FRONT_FACE_VERIFIED | NO_FACE | MULTIPLE_FACES | NOT_FRONT_FACING | FACE_NOT_CENTERED | IMAGE_NOT_USABLE",
+  "message": "short user-facing message"
+}
+`;
+
+  try {
+    const response = await ai.models.generateContent({
+      model: "gemini-3.5-flash",
+      contents: [
+        {
+          inlineData: {
+            mimeType,
+            data: base64Image,
+          },
+        },
+        {
+          text: prompt,
+        },
+      ],
+      config: {
+        responseMimeType: "application/json",
+        responseSchema: {
+          type: "object",
+          properties: {
+            valid: { type: "boolean" },
+            faceCount: { type: "number" },
+            frontFacing: { type: "boolean" },
+            centered: { type: "boolean" },
+            imageUsable: { type: "boolean" },
+            code: { type: "string" },
+            message: { type: "string" },
+          },
+          required: [
+            "valid",
+            "faceCount",
+            "frontFacing",
+            "centered",
+            "imageUsable",
+            "code",
+            "message",
+          ],
+        },
+      },
+    });
+
+    const result = JSON.parse(response.text);
+
+    return {
+      valid:
+        result.valid === true &&
+        result.faceCount === 1 &&
+        result.frontFacing === true &&
+        result.centered === true &&
+        result.imageUsable === true,
+      faceCount: result.faceCount,
+      frontFacing: result.frontFacing,
+      centered: result.centered,
+      imageUsable: result.imageUsable,
+      code: result.code,
+      message: result.message,
+    };
+  } catch (error) {
+    console.error("Gemini Face Validation Error:", error);
+    throw error;
+  }
+};
+
+
+// =====================================
 // FINAL REPORT
 // =====================================
 
@@ -278,4 +394,5 @@ Important:
 module.exports = {
   generateInterviewQuestions,
   generateFinalReport,
+  validateFrontFaceImage,
 };

@@ -2,6 +2,7 @@ const Interview = require("../models/Interview");
 const {
   generateInterviewQuestions,
   generateFinalReport,
+  validateFrontFaceImage,
 } = require("../services/geminiService");
 
 const {
@@ -563,6 +564,25 @@ const startProctoring = async (req, res) => {
       });
     }
 
+    // Validate the actual webcam image BEFORE uploading it.
+    // Only one clearly visible, centered, front-facing face is accepted.
+    const faceValidation = await validateFrontFaceImage(
+      req.file.buffer,
+      req.file.mimetype || "image/jpeg"
+    );
+
+    if (!faceValidation.valid) {
+      return res.status(400).json({
+        success: false,
+        message:
+          faceValidation.message ||
+          "Please show one clear, front-facing face to the camera.",
+        code: faceValidation.code,
+        faceCount: faceValidation.faceCount,
+      });
+    }
+
+    // Upload ONLY the verified image.
     const uploadResult = await new Promise((resolve, reject) => {
       const uploadStream = cloudinary.uploader.upload_stream(
         {
@@ -589,11 +609,12 @@ const startProctoring = async (req, res) => {
 
     return res.status(200).json({
       success: true,
-      message: "Interview started successfully",
+      message: "Front-facing face verified and interview started successfully",
       data: {
         interviewId: interview._id,
         startedAt: interview.proctoring.startedAt,
         imageUrl: interview.proctoring.initialImageUrl,
+        faceVerified: true,
       },
     });
   } catch (error) {
@@ -605,7 +626,6 @@ const startProctoring = async (req, res) => {
     });
   }
 };
-
 
 // =====================================
 // TERMINATE INTERVIEW
