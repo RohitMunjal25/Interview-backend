@@ -10,7 +10,7 @@ const getGeminiClient = async () => {
 // GENERATE QUESTIONS
 // =====================================
 
-const generateInterviewQuestions = async (resumeText, jobRole) => {
+const generateInterviewQuestions = async (resumeText, jobRole, difficulty, questionCount) => {
   const ai = await getGeminiClient();
 
   const prompt = `
@@ -22,16 +22,24 @@ and the target job role.
 Target Job Role:
 ${jobRole}
 
+Difficulty Level:
+${difficulty}
+
+Number of Questions:
+${questionCount}
+
 Candidate Resume:
 ${resumeText}
 
-Generate exactly 10 interview questions.
+Generate exactly ${questionCount} interview questions.
 
 Requirements:
 - 5 technical questions
 - 3 behavioral questions
 - 2 situational questions
 - Questions must be relevant to the target job role.
+- All questions must match the requested difficulty level.
+- Use the exact difficulty level provided by the frontend; do not change it.
 - Questions should use technologies/projects mentioned in the resume where appropriate.
 - Do not ask questions unrelated to the candidate's profile.
 - Make questions suitable for an actual job interview.

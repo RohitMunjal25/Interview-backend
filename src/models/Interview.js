@@ -14,6 +14,17 @@ const interviewSchema = new mongoose.Schema(
       trim: true,
     },
 
+    difficulty: {
+      type: String,
+      required: true,
+      trim: true,
+    },
+
+    questionCount: {
+      type: Number,
+      required: true,
+    },
+
     resumeText: {
       type: String,
       default: "",

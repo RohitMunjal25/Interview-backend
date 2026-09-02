@@ -20,6 +20,14 @@ const fetchImageBuffer = async (imageUrl) => {
   }
 };
 
+const formatIndiaDateTime = (date) => {
+  if (!date) return "N/A";
+
+  return new Date(date).toLocaleString("en-IN", {
+    timeZone: "Asia/Kolkata",
+  });
+};
+
 const generateInterviewReport = async (interview) => {
   const fileName = `interview-report-${interview._id}`;
 
@@ -114,17 +122,6 @@ const generateInterviewReport = async (interview) => {
     // CANDIDATE DETAILS
     section("Candidate Details");
 
-    if (imageBuffer) {
-      try {
-        doc.image(imageBuffer, 455, doc.y, {
-          fit: [90, 110],
-          align: "right",
-        });
-      } catch (error) {
-        console.error("Unable to add candidate image:", error.message);
-      }
-    }
-
     doc.fontSize(11).font("Helvetica-Bold").text("Name:");
     doc.font("Helvetica").text(candidateName);
 
@@ -142,7 +139,7 @@ const generateInterviewReport = async (interview) => {
       .font("Helvetica")
       .text(
         interview.createdAt
-          ? new Date(interview.createdAt).toLocaleString()
+          ? formatIndiaDateTime(interview.createdAt)
           : "N/A"
       );
 
@@ -288,14 +285,14 @@ const generateInterviewReport = async (interview) => {
       .text(
         `Started At: ${
           interview.proctoring?.startedAt
-            ? new Date(interview.proctoring.startedAt).toLocaleString()
+            ? formatIndiaDateTime(interview.proctoring.startedAt)
             : "N/A"
         }`
       )
       .text(
         `Ended At: ${
           interview.proctoring?.endedAt
-            ? new Date(interview.proctoring.endedAt).toLocaleString()
+            ? formatIndiaDateTime(interview.proctoring.endedAt)
             : "N/A"
         }`
       )

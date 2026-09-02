@@ -134,12 +134,26 @@ const uploadResume = async (req, res) => {
 
 const generateQuestions = async (req, res) => {
   try {
-    const { jobRole } = req.body;
+    const { jobRole, difficulty, questionCount } = req.body;
 
     if (!jobRole) {
       return res.status(400).json({
         success: false,
         message: "Job role is required",
+      });
+    }
+
+    if (!difficulty) {
+      return res.status(400).json({
+        success: false,
+        message: "Difficulty is required",
+      });
+    }
+
+    if (!questionCount) {
+      return res.status(400).json({
+        success: false,
+        message: "Question count is required",
       });
     }
 
@@ -165,13 +179,17 @@ const generateQuestions = async (req, res) => {
     const questions =
       await generateInterviewQuestions(
         user.resume.extractedText,
-        jobRole
+        jobRole,
+        difficulty,
+        questionCount
       );
 
     const interview =
       await Interview.create({
         user: user._id,
         jobRole,
+        difficulty,
+        questionCount,
         resumeText:
           user.resume.extractedText,
         questions,
