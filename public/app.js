@@ -116,14 +116,22 @@ async function loadQuestionAudio(url) {
 }
 
 function speakWithBrowser(text, onEnd) {
-  window.speechSynthesis.cancel();
+  const synth = window.speechSynthesis;
+  if (!synth || typeof window.SpeechSynthesisUtterance !== "function") {
+    // Some Android in-app/custom-tab browsers do not expose Web Speech API.
+    // Keep the interview usable by showing the question and then listening.
+    $("recordingStatus").textContent = "Read the question on screen. Listening will begin shortly…";
+    setTimeout(onEnd, 2500);
+    return;
+  }
+  synth.cancel();
   const utterance = new SpeechSynthesisUtterance(text);
   utterance.lang = "en-IN";
   utterance.rate = 0.95;
   utterance.onend = onEnd;
   utterance.onerror = onEnd;
   $("recordingStatus").textContent = "AI is speaking…";
-  window.speechSynthesis.speak(utterance);
+  synth.speak(utterance);
 }
 
 async function playRetryPrompt(retryMessage) {
