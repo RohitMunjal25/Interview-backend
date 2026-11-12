@@ -142,25 +142,6 @@ function speakWithBrowser(text, onEnd) {
   synth.speak(utterance);
 }
 
-async function playRetryPrompt(retryMessage, turn = state.questionTurn) {
-  $("recordingStatus").textContent = "AI is asking you to repeat your answer…";
-  try {
-    const response = await fetch(`/api/interview/${state.interview.interviewId}/voice-feedback`, {
-      method: "POST", headers: { Authorization: `Bearer ${state.token}` },
-    });
-    if (!response.ok) throw new Error("Voice feedback unavailable");
-    if (state.audioUrl) URL.revokeObjectURL(state.audioUrl);
-    state.audioUrl = URL.createObjectURL(await response.blob());
-    const player = $("questionAudio"); player.src = state.audioUrl;
-    player.onended = () => startRecording(turn);
-    await player.play();
-  } catch (_) {
-    state.serverTtsUnavailable = true;
-    // Browser speech is a reliable fallback when the server TTS provider is unavailable.
-    speakWithBrowser(retryMessage || "I could not hear your answer clearly. Please repeat your answer.", () => startRecording(turn));
-  }
-}
-
 function showQuestion(question) {
   state.questionTurn += 1;
   const turn = state.questionTurn;
@@ -173,7 +154,7 @@ function showQuestion(question) {
   $("modeBadge").textContent = state.interview.interviewType.toUpperCase();
   const audioMode = state.interview.interviewType === "audio";
   $("textAnswer").hidden = audioMode; $("audioAnswer").hidden = !audioMode;
-  $("answerText").value = ""; $("answerPreview").hidden = true; state.recording = null;
+  $("answerText").value = ""; $("answerPreview").hidden = true; $("voiceReview").hidden = true; $("voiceTranscript").value = ""; state.recording = null;
   if (audioMode) loadQuestionAudio(question.audioUrl, turn).catch((error) => message(error.message, true));
   else { $("questionAudio").removeAttribute("src"); }
 }
@@ -208,9 +189,9 @@ function startRecording(turn) {
       stopSilenceDetection();
       state.recording = new Blob(chunks, { type: state.recorder.mimeType || "audio/webm" });
       if (turn !== state.questionTurn) return;
-      if (!state.recording.size) return retryFromBrowser("No voice was detected. Please repeat your answer.");
-      $("recordingStatus").textContent = "Answer captured. AI is evaluating…";
-      submitAudio(questionId, turn);
+      if (!state.recording.size) return showVoiceReview("", "No voice was detected. You can type your answer or record again.", turn);
+      $("recordingStatus").textContent = "Converting your recording to text…";
+      transcribeAudioPreview(questionId, turn);
     };
     state.recorder.start();
     $("recordingStatus").textContent = "Listening… answer naturally. I will submit after 2.5 seconds of silence.";
@@ -252,29 +233,49 @@ function stopSilenceDetection() {
   state.audioContext?.close(); state.audioContext = null;
 }
 
-async function submitAudio(questionId, turn) {
+async function transcribeAudioPreview(questionId, turn) {
   if (!state.recording) return;
   if (turn !== state.questionTurn || state.answerSubmitting) return;
   state.answerSubmitting = true;
-  try { message("Transcribing and evaluating your answer..."); const body = new FormData(); body.append("questionId", questionId); body.append("audio", state.recording, "answer.webm"); const result = await api(`/api/interview/${state.interview.interviewId}/answer/audio`, { method: "POST", body }); if (turn === state.questionTurn) await submitResult(result); }
+  try {
+    message("Converting your audio to text...");
+    const body = new FormData(); body.append("questionId", questionId); body.append("audio", state.recording, "answer.webm");
+    const result = await api(`/api/interview/${state.interview.interviewId}/answer/audio/transcribe`, { method: "POST", body });
+    if (turn === state.questionTurn) showVoiceReview(result.data.transcript, "Review the text, edit if needed, then submit your answer.", turn);
+  }
   catch (error) {
     if (turn !== state.questionTurn) return;
-    if (error.status === 422 && error.payload?.code === "VOICE_UNCLEAR") {
-      message("Voice was unclear. AI will ask you to repeat.", true);
-      return playRetryPrompt(error.payload.data?.retryMessage, turn);
-    }
-    if (error.status === 503 && error.payload?.code === "LOCAL_TRANSCRIPTION_UNAVAILABLE") {
-      message("Local transcription had a temporary issue. Retrying your answer.", true);
-      return retryFromBrowser("There was a temporary technical issue. Please repeat your answer.", turn);
-    }
-    message(error.message || "Voice transcription is temporarily unavailable. Please try again.", true);
+    showVoiceReview("", error.message || "Audio could not be converted. Type your answer or record again.", turn);
   } finally { state.answerSubmitting = false; }
 }
 
-function retryFromBrowser(text, turn = state.questionTurn) {
-  message("Let’s try that answer again.", true);
-  return playRetryPrompt(text, turn);
+function showVoiceReview(transcript, status, turn) {
+  if (turn !== state.questionTurn) return;
+  $("voiceTranscript").value = transcript || "";
+  $("voiceReview").hidden = false;
+  $("recordingStatus").textContent = status;
 }
+
+$("recordAgain").onclick = () => {
+  $("voiceReview").hidden = true;
+  $("voiceTranscript").value = "";
+  startRecording(state.questionTurn);
+};
+
+$("submitVoiceText").onclick = async () => {
+  const answer = $("voiceTranscript").value.trim();
+  const turn = state.questionTurn;
+  const questionId = state.question._id || state.question.questionId;
+  if (!answer) return message("Type or record an answer before submitting.", true);
+  if (state.answerSubmitting) return;
+  state.answerSubmitting = true;
+  try {
+    message("Submitting your answer...");
+    const result = await api(`/api/interview/${state.interview.interviewId}/answer`, { method: "POST", json: { questionId, answer, answerMode: "voice" } });
+    if (turn === state.questionTurn) await submitResult(result);
+  } catch (error) { message(error.message || "Failed to submit answer.", true); }
+  finally { state.answerSubmitting = false; }
+};
 
 async function tabViolation() {
   if (!state.tabGuard || !state.interview) return;

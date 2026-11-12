@@ -659,6 +659,57 @@ const submitMediaAnswer = async (req, res) => {
   }
 };
 
+// =====================================
+// TRANSCRIBE VOICE ANSWER FOR CANDIDATE REVIEW
+// =====================================
+const transcribeMediaAnswer = async (req, res) => {
+  try {
+    const { interviewId } = req.params;
+    const { questionId } = req.body;
+    const audio = req.file;
+    if (!questionId || !audio) {
+      return res.status(400).json({ success: false, message: "questionId and audio are required" });
+    }
+
+    const interview = await Interview.findOne({ _id: interviewId, user: req.user._id });
+    if (!interview) return res.status(404).json({ success: false, message: "Interview not found" });
+    if (interview.status !== "in_progress" || !interview.proctoring?.startedAt) {
+      return res.status(400).json({ success: false, message: "Interview is not active" });
+    }
+    if (!interview.questions.id(questionId)) {
+      return res.status(404).json({ success: false, message: "Question not found" });
+    }
+
+    let voiceResult;
+    try {
+      voiceResult = await transcribeAudio(audio.buffer, audio.mimetype);
+    } catch (error) {
+      console.error("Voice Preview Transcription Error:", error.message);
+      return res.status(503).json({
+        success: false,
+        code: "LOCAL_TRANSCRIPTION_UNAVAILABLE",
+        message: "Voice transcription is temporarily unavailable. Type your answer below or try recording again.",
+      });
+    }
+
+    if (!voiceResult.isClear) {
+      return res.status(422).json({
+        success: false,
+        code: "VOICE_UNCLEAR",
+        message: "No clear speech was detected. Type your answer below or record again.",
+      });
+    }
+
+    return res.status(200).json({
+      success: true,
+      data: { questionId, transcript: voiceResult.transcript },
+    });
+  } catch (error) {
+    console.error("Voice Preview Error:", error);
+    return res.status(500).json({ success: false, message: "Failed to transcribe voice answer" });
+  }
+};
+
 const getVoiceFeedback = async (req, res) => {
   try {
     const interview = await Interview.findOne({ _id: req.params.interviewId, user: req.user._id, status: "in_progress" });
@@ -952,5 +1003,6 @@ module.exports = {
   terminateInterview,
   getQuestionAudio,
   submitMediaAnswer,
+  transcribeMediaAnswer,
   getVoiceFeedback,
 };

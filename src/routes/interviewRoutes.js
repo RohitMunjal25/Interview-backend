@@ -31,6 +31,7 @@ const {
   terminateInterview,
   getQuestionAudio,
   submitMediaAnswer,
+  transcribeMediaAnswer,
   getVoiceFeedback,
 } = require("../controllers/interviewController");
 
@@ -246,6 +247,34 @@ router.get("/:interviewId/questions/:questionId/audio", protect, getQuestionAudi
  *       200: { description: Voice answer saved or interview completed }
  */
 router.post("/:interviewId/answer/audio", protect, mediaUpload.single("audio"), submitMediaAnswer);
+
+/**
+ * @swagger
+ * /api/interview/{interviewId}/answer/audio/transcribe:
+ *   post:
+ *     tags: [Interview]
+ *     summary: Convert a recorded answer to editable text
+ *     description: Transcribes audio only. The candidate reviews and edits the returned text before submitting the answer.
+ *     security: [{ bearerAuth: [] }]
+ *     parameters:
+ *       - in: path
+ *         name: interviewId
+ *         required: true
+ *         schema: { type: string }
+ *     requestBody:
+ *       required: true
+ *       content:
+ *         multipart/form-data:
+ *           schema:
+ *             type: object
+ *             required: [questionId, audio]
+ *             properties:
+ *               questionId: { type: string }
+ *               audio: { type: string, format: binary }
+ *     responses:
+ *       200: { description: Editable transcript returned }
+ */
+router.post("/:interviewId/answer/audio/transcribe", protect, mediaUpload.single("audio"), transcribeMediaAnswer);
 
 /**
  * @swagger
