@@ -19,10 +19,11 @@ def main():
         condition_on_previous_text=False,
     )
     transcript = " ".join(segment.text.strip() for segment in segments).strip()
-    words = [word for word in transcript.split() if any(char.isalnum() for char in word)]
     print(json.dumps({
         "transcript": transcript,
-        "isClear": len(words) >= 3,
+        # Do not reject a valid short reply as unclear. The interview evaluator
+        # can assess whether the content is sufficient for the question.
+        "isClear": bool(transcript),
         "retryMessage": "I could not hear your answer clearly. Please speak a little louder and repeat your answer.",
     }))
 

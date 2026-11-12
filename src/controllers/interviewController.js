@@ -622,11 +622,11 @@ const submitMediaAnswer = async (req, res) => {
       voiceResult = await transcribeAudio(audio.buffer, audio.mimetype);
     } catch (transcriptionError) {
       console.error("Local Whisper transcription failed:", transcriptionError.message);
-      voiceResult = {
-        transcript: "",
-        isClear: false,
-        retryMessage: "I could not process your answer. Please speak clearly and repeat it.",
-      };
+      return res.status(503).json({
+        success: false,
+        code: "LOCAL_TRANSCRIPTION_UNAVAILABLE",
+        message: "Local voice transcription is unavailable. Please try again in a moment.",
+      });
     }
     if (!voiceResult.isClear) {
       return res.status(422).json({

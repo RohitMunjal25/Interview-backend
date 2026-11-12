@@ -236,7 +236,11 @@ async function submitAudio() {
       message("Voice was unclear. AI will ask you to repeat.", true);
       return playRetryPrompt(error.payload.data?.retryMessage);
     }
-    retryFromBrowser("I could not process that answer. Please repeat it clearly.");
+    if (error.status === 503 && error.payload?.code === "LOCAL_TRANSCRIPTION_UNAVAILABLE") {
+      message("Local transcription had a temporary issue. Retrying your answer.", true);
+      return retryFromBrowser("There was a temporary technical issue. Please repeat your answer.");
+    }
+    message(error.message || "Voice transcription is temporarily unavailable. Please try again.", true);
   }
 }
 

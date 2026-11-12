@@ -3,7 +3,7 @@
 // Gemini -> Groq -> OpenRouter
 // =====================================
 
-const PROVIDER_ORDER = (process.env.AI_PROVIDER_ORDER || "gemini,groq,openrouter")
+const PROVIDER_ORDER = (process.env.AI_PROVIDER_ORDER || "gemini,groq,openai,openrouter")
   .split(",")
   .map((item) => item.trim().toLowerCase())
   .filter(Boolean);
@@ -260,9 +260,20 @@ const callOpenRouter = async (prompt, mode) => {
   });
 };
 
+const callOpenAI = async (prompt, mode) => {
+  return callOpenAICompatible({
+    url: "https://api.openai.com/v1/chat/completions",
+    apiKey: process.env.OPENAI_API_KEY,
+    model: process.env.OPENAI_MODEL || "gpt-4.1-mini",
+    prompt,
+    mode,
+  });
+};
+
 const providerCalls = {
   gemini: callGemini,
   groq: callGroq,
+  openai: callOpenAI,
   openrouter: callOpenRouter,
 };
 

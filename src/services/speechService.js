@@ -43,6 +43,69 @@ const synthesizeQuestion = async (text) => {
 };
 
 const transcribeAudio = async (buffer, mimeType) => {
+  const retryMessage = "I could not hear your answer clearly. Please speak a little louder and repeat your answer.";
+  const normalize = (text) => ({
+    transcript: String(text || "").trim(),
+    isClear: Boolean(String(text || "").trim()),
+    retryMessage,
+  });
+
+  const errors = [];
+  const providers = (process.env.AUDIO_PROVIDER_ORDER || "gemini,groq,openai,local")
+    .split(",").map((provider) => provider.trim().toLowerCase()).filter(Boolean);
+
+  for (const provider of providers) {
+    try {
+      if (provider === "gemini") {
+        const response = await getClient().models.generateContent({
+          model: process.env.GEMINI_TRANSCRIPTION_MODEL || "gemini-3.8-flash",
+          contents: [{ role: "user", parts: [
+            { inlineData: { mimeType: mimeType || "audio/webm", data: buffer.toString("base64") } },
+            { text: "Transcribe this interview answer. Return only the spoken words." },
+          ] }],
+        });
+        const transcript = response.text?.trim();
+        if (!transcript) throw new Error("Gemini returned no transcript");
+        return normalize(transcript);
+      }
+
+      if (provider === "groq" || provider === "openai") {
+        const apiKey = provider === "groq" ? process.env.GROQ_API_KEY : process.env.OPENAI_API_KEY;
+        if (!apiKey) throw new Error(`${provider.toUpperCase()} API key is not configured`);
+        const form = new FormData();
+        form.append("file", new Blob([buffer], { type: mimeType || "audio/webm" }), "answer.webm");
+        form.append("model", provider === "groq"
+          ? (process.env.GROQ_TRANSCRIPTION_MODEL || "whisper-large-v3-turbo")
+          : (process.env.OPENAI_TRANSCRIPTION_MODEL || "gpt-4o-transcribe"));
+        form.append("language", "en");
+        form.append("response_format", "json");
+        const response = await fetch(
+          provider === "groq"
+            ? "https://api.groq.com/openai/v1/audio/transcriptions"
+            : "https://api.openai.com/v1/audio/transcriptions",
+          { method: "POST", headers: { Authorization: `Bearer ${apiKey}` }, body: form }
+        );
+        if (!response.ok) throw new Error(`${provider} transcription failed: ${await response.text()}`);
+        const result = await response.json();
+        if (!result.text) throw new Error(`${provider} returned no transcript`);
+        return normalize(result.text);
+      }
+
+      if (provider === "local") {
+        return await transcribeLocally(buffer, mimeType);
+      }
+
+      throw new Error("Unknown audio provider");
+    } catch (error) {
+      errors.push(`${provider}: ${error.message}`);
+      console.error(`[Audio] ${provider} failed:`, error.message);
+    }
+  }
+
+  throw new Error(`All audio providers failed. ${errors.join(" | ")}`);
+};
+
+const transcribeLocally = async (buffer, mimeType) => {
   const temporaryDirectory = await fs.mkdtemp(path.join(os.tmpdir(), "ai-interview-audio-"));
   const extension = mimeType?.includes("mp4") ? ".mp4" : ".webm";
   const audioPath = path.join(temporaryDirectory, `answer${extension}`);
