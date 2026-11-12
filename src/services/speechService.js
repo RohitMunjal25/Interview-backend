@@ -1,8 +1,77 @@
 const { GoogleGenAI } = require("@google/genai");
-const { execFile } = require("child_process");
+const { spawn } = require("child_process");
 const fs = require("fs/promises");
 const os = require("os");
 const path = require("path");
+
+const AUDIO_CLOUD_TIMEOUT_MS = Number(process.env.AUDIO_CLOUD_TIMEOUT_MS || 8000);
+
+const withAudioTimeout = (promise, provider) => new Promise((resolve, reject) => {
+  const timer = setTimeout(() => reject(new Error(`${provider} timed out`)), AUDIO_CLOUD_TIMEOUT_MS);
+  promise.then(
+    (result) => { clearTimeout(timer); resolve(result); },
+    (error) => { clearTimeout(timer); reject(error); }
+  );
+});
+
+let localWhisperProcess = null;
+let localWhisperBuffer = "";
+let localWhisperSequence = 0;
+const localWhisperPending = new Map();
+
+const rejectLocalWhisperPending = (error) => {
+  for (const { reject } of localWhisperPending.values()) reject(error);
+  localWhisperPending.clear();
+};
+
+const getLocalWhisperWorker = () => {
+  if (localWhisperProcess && !localWhisperProcess.killed) return localWhisperProcess;
+
+  const scriptPath = path.join(__dirname, "localTranscription.py");
+  localWhisperProcess = spawn(process.env.PYTHON_PATH || "python", [scriptPath, "--server"], {
+    stdio: ["pipe", "pipe", "pipe"],
+    windowsHide: true,
+  });
+  localWhisperProcess.stdout.setEncoding("utf8");
+  localWhisperProcess.stdout.on("data", (chunk) => {
+    localWhisperBuffer += chunk;
+    const lines = localWhisperBuffer.split("\n");
+    localWhisperBuffer = lines.pop();
+    for (const line of lines) {
+      if (!line.trim()) continue;
+      try {
+        const response = JSON.parse(line);
+        const pending = localWhisperPending.get(response.id);
+        if (!pending) continue;
+        localWhisperPending.delete(response.id);
+        response.error ? pending.reject(new Error(response.error)) : pending.resolve(response);
+      } catch (error) {
+        console.error("Local Whisper returned invalid output:", line);
+      }
+    }
+  });
+  localWhisperProcess.stderr.setEncoding("utf8");
+  localWhisperProcess.stderr.on("data", (chunk) => console.error("[Local Whisper]", chunk.trim()));
+  localWhisperProcess.on("error", (error) => rejectLocalWhisperPending(error));
+  localWhisperProcess.on("exit", (code) => {
+    localWhisperProcess = null;
+    rejectLocalWhisperPending(new Error(`Local Whisper stopped unexpectedly (${code})`));
+  });
+  return localWhisperProcess;
+};
+
+const transcribeWithLocalWhisper = (audioPath) => new Promise((resolve, reject) => {
+  const worker = getLocalWhisperWorker();
+  const id = String(++localWhisperSequence);
+  const timer = setTimeout(() => {
+    if (localWhisperPending.delete(id)) reject(new Error("Local Whisper transcription timed out"));
+  }, Number(process.env.LOCAL_WHISPER_TIMEOUT_MS || 180000));
+  localWhisperPending.set(id, {
+    resolve: (result) => { clearTimeout(timer); resolve(result); },
+    reject: (error) => { clearTimeout(timer); reject(error); },
+  });
+  worker.stdin.write(`${JSON.stringify({ id, audioPath })}\n`);
+});
 
 const getClient = () => {
   if (!process.env.GEMINI_API_KEY) {
@@ -57,13 +126,13 @@ const transcribeAudio = async (buffer, mimeType) => {
   for (const provider of providers) {
     try {
       if (provider === "gemini") {
-        const response = await getClient().models.generateContent({
+        const response = await withAudioTimeout(getClient().models.generateContent({
           model: process.env.GEMINI_TRANSCRIPTION_MODEL || "gemini-3.8-flash",
           contents: [{ role: "user", parts: [
             { inlineData: { mimeType: mimeType || "audio/webm", data: buffer.toString("base64") } },
             { text: "Transcribe this interview answer. Return only the spoken words." },
           ] }],
-        });
+        }), provider);
         const transcript = response.text?.trim();
         if (!transcript) throw new Error("Gemini returned no transcript");
         return normalize(transcript);
@@ -79,12 +148,12 @@ const transcribeAudio = async (buffer, mimeType) => {
           : (process.env.OPENAI_TRANSCRIPTION_MODEL || "gpt-4o-transcribe"));
         form.append("language", "en");
         form.append("response_format", "json");
-        const response = await fetch(
+        const response = await withAudioTimeout(fetch(
           provider === "groq"
             ? "https://api.groq.com/openai/v1/audio/transcriptions"
             : "https://api.openai.com/v1/audio/transcriptions",
           { method: "POST", headers: { Authorization: `Bearer ${apiKey}` }, body: form }
-        );
+        ), provider);
         if (!response.ok) throw new Error(`${provider} transcription failed: ${await response.text()}`);
         const result = await response.json();
         if (!result.text) throw new Error(`${provider} returned no transcript`);
@@ -109,20 +178,9 @@ const transcribeLocally = async (buffer, mimeType) => {
   const temporaryDirectory = await fs.mkdtemp(path.join(os.tmpdir(), "ai-interview-audio-"));
   const extension = mimeType?.includes("mp4") ? ".mp4" : ".webm";
   const audioPath = path.join(temporaryDirectory, `answer${extension}`);
-  const scriptPath = path.join(__dirname, "localTranscription.py");
   try {
     await fs.writeFile(audioPath, buffer);
-    const output = await new Promise((resolve, reject) => {
-      execFile(
-        process.env.PYTHON_PATH || "python",
-        [scriptPath, audioPath],
-        { timeout: Number(process.env.LOCAL_WHISPER_TIMEOUT_MS || 180000) },
-        (error, stdout, stderr) => error
-          ? reject(new Error(stderr || stdout || error.message))
-          : resolve(stdout)
-      );
-    });
-    const parsed = JSON.parse(String(output).trim());
+    const parsed = await transcribeWithLocalWhisper(audioPath);
     if (parsed.error) throw new Error(parsed.error);
     if (typeof parsed.transcript !== "string") throw new Error("Local Whisper returned an invalid transcript");
     return parsed;

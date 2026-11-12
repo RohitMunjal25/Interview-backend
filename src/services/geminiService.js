@@ -8,7 +8,9 @@ const PROVIDER_ORDER = (process.env.AI_PROVIDER_ORDER || "gemini,groq,openai,ope
   .map((item) => item.trim().toLowerCase())
   .filter(Boolean);
 
-const AI_TIMEOUT_MS = Number(process.env.AI_TIMEOUT_MS || 45000);
+// Move to the next provider quickly instead of leaving the interview finish
+// screen stuck behind one unavailable provider.
+const AI_TIMEOUT_MS = Number(process.env.AI_TIMEOUT_MS || 15000);
 
 const getGeminiClient = async () => {
   if (!process.env.GEMINI_API_KEY) {
@@ -319,6 +321,10 @@ const generateInterviewQuestions = async (
   difficulty = "medium",
   questionCount = 10
 ) => {
+  const total = Math.max(1, Math.min(20, Number(questionCount) || 10));
+  const technicalCount = Math.ceil(total * 0.5);
+  const behavioralCount = Math.floor(total * 0.3);
+  const situationalCount = total - technicalCount - behavioralCount;
   const prompt = `
 You are an expert technical interviewer.
 
@@ -332,17 +338,17 @@ Difficulty Level:
 ${difficulty}
 
 Number of Questions:
-${questionCount}
+${total}
 
 Candidate Resume:
 ${resumeText}
 
-Generate exactly ${questionCount} interview questions.
+Generate exactly ${total} interview questions.
 
 Requirements:
-- 5 technical questions
-- 3 behavioral questions
-- 2 situational questions
+- ${technicalCount} technical questions
+- ${behavioralCount} behavioral questions
+- ${situationalCount} situational questions
 - Questions must be relevant to the target job role.
 - All questions must match the requested difficulty level.
 - Use the exact difficulty level provided by the frontend; do not change it.
@@ -359,7 +365,10 @@ Return JSON in this exact shape:
 }
 `;
 
-  return runWithFallback(prompt, "questions");
+  const questions = await runWithFallback(prompt, "questions");
+  // Providers occasionally return more items than requested. The backend is
+  // authoritative so the frontend always receives the selected count.
+  return questions.slice(0, total);
 };
 
 // =====================================

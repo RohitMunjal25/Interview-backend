@@ -214,7 +214,7 @@ const generateQuestions = async (req, res) => {
         questionCount
       );
 
-    const sessionQuestions = questions.map((question) => ({
+    const sessionQuestions = questions.slice(0, Number(questionCount)).map((question) => ({
       ...question,
       _id: new mongoose.Types.ObjectId(),
       answer: question.answer || "",
@@ -228,7 +228,7 @@ const generateQuestions = async (req, res) => {
       user: user._id,
       jobRole,
       difficulty,
-      questionCount,
+      questionCount: sessionQuestions.length,
       interviewType,
       resumeText: user.resume.extractedText,
       questions: sessionQuestions,
