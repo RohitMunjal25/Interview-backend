@@ -175,7 +175,7 @@ async function submitResult(result) {
 
 $("sendText").onclick = async () => {
   const answer = $("answerText").value.trim(); if (!answer) return message("Write an answer first.", true);
-  try { message("Saving answer..."); await submitResult(await api(`/api/interview/${state.interview.interviewId}/answer`, { method: "POST", json: { questionId: state.question._id, answer } })); } catch (error) { message(error.message, true); }
+  try { message("Saving answer..."); await submitResult(await api(`/api/interview/${state.interview.interviewId}/answer`, { method: "POST", json: { questionId: state.question._id || state.question.questionId, answer } })); } catch (error) { message(error.message, true); }
 };
 
 function startRecording() {
@@ -238,7 +238,7 @@ function stopSilenceDetection() {
 
 async function submitAudio() {
   if (!state.recording) return;
-  try { message("Transcribing and evaluating your answer..."); const body = new FormData(); body.append("questionId", state.question._id); body.append("audio", state.recording, "answer.webm"); await submitResult(await api(`/api/interview/${state.interview.interviewId}/answer/audio`, { method: "POST", body })); }
+  try { message("Transcribing and evaluating your answer..."); const body = new FormData(); body.append("questionId", state.question._id || state.question.questionId); body.append("audio", state.recording, "answer.webm"); await submitResult(await api(`/api/interview/${state.interview.interviewId}/answer/audio`, { method: "POST", body })); }
   catch (error) {
     if (error.status === 422 && error.payload?.code === "VOICE_UNCLEAR") {
       message("Voice was unclear. AI will ask you to repeat.", true);

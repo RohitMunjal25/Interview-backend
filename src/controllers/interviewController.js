@@ -371,6 +371,7 @@ const submitAnswer = async (req, res) => {
             interview.questions.length,
 
           nextQuestion: {
+            _id: nextQuestion._id,
             questionId:
               nextQuestion._id,
 
