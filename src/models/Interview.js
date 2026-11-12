@@ -25,6 +25,12 @@ const interviewSchema = new mongoose.Schema(
       required: true,
     },
 
+    interviewType: {
+      type: String,
+      enum: ["text", "audio"],
+      default: "text",
+    },
+
     resumeText: {
       type: String,
       default: "",
@@ -53,6 +59,11 @@ const interviewSchema = new mongoose.Schema(
           enum: ["text", "voice"],
           default: "text",
         },
+
+        // Media is retained as supporting evidence only. The report continues
+        // to use `answer`, so its existing format is not changed.
+        answerAudioUrl: { type: String, default: null },
+        answerVideoUrl: { type: String, default: null },
 
         evaluation: {
           score: {

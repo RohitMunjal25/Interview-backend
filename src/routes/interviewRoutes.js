@@ -11,14 +11,27 @@ const proctorUpload = multer({
   },
 });
 
+const mediaUpload = multer({
+  storage: multer.memoryStorage(),
+  limits: { fileSize: 50 * 1024 * 1024 },
+  fileFilter: (req, file, cb) => {
+    if (file.mimetype.startsWith("audio/")) return cb(null, true);
+    cb(new Error("Only audio files are allowed"));
+  },
+});
+
 const {
   uploadResume,
+  suggestJobRoles,
   generateQuestions,
   submitAnswer,
   downloadInterviewReport,
   getInterviewReport,
   startProctoring,
   terminateInterview,
+  getQuestionAudio,
+  submitMediaAnswer,
+  getVoiceFeedback,
 } = require("../controllers/interviewController");
 
 const router = express.Router();
@@ -30,7 +43,7 @@ const router = express.Router();
  *     tags:
  *       - Interview
  *     summary: Upload resume
- *     description: Upload PDF, DOC or DOCX resume along with the selected job role and extract resume text.
+ *     description: Upload a PDF, DOC or DOCX resume and extract its text.
  *     security:
  *       - bearerAuth: []
  *     requestBody:
@@ -41,16 +54,11 @@ const router = express.Router();
  *             type: object
  *             required:
  *               - resume
- *               - jobRole
  *             properties:
  *               resume:
  *                 type: string
  *                 format: binary
  *                 description: Resume file in PDF, DOC or DOCX format
- *               jobRole:
- *                 type: string
- *                 description: Job role for the interview
- *                 example: Frontend Developer
  *     responses:
  *       200:
  *         description: Resume uploaded and parsed successfully
@@ -70,6 +78,18 @@ router.post(
 
 /**
  * @swagger
+ * /api/interview/suggest-job-roles:
+ *   get:
+ *     tags: [Interview]
+ *     summary: Suggest job roles from the uploaded resume
+ *     security: [{ bearerAuth: [] }]
+ *     responses:
+ *       200: { description: Resume-based job role suggestions }
+ */
+router.get("/suggest-job-roles", protect, suggestJobRoles);
+
+/**
+ * @swagger
  * /api/interview/generate-questions:
  *   post:
  *     tags:
@@ -86,11 +106,25 @@ router.post(
  *             type: object
  *             required:
  *               - jobRole
+ *               - difficulty
+ *               - questionCount
  *             properties:
  *               jobRole:
  *                 type: string
  *                 description: Job role for which interview questions should be generated
  *                 example: Frontend Developer
+ *               difficulty:
+ *                 type: string
+ *                 enum: [easy, medium, hard]
+ *                 example: medium
+ *               questionCount:
+ *                 type: integer
+ *                 example: 10
+ *               interviewType:
+ *                 type: string
+ *                 enum: [text, audio]
+ *                 default: text
+ *                 description: Use audio to return playable question-audio URLs.
  *     responses:
  *       200:
  *         description: Interview questions generated successfully
@@ -160,6 +194,76 @@ router.post(
   protect,
   submitAnswer
 );
+
+/**
+ * @swagger
+ * /api/interview/{interviewId}/questions/{questionId}/audio:
+ *   get:
+ *     tags: [Interview]
+ *     summary: Play an interview question as audio
+ *     description: Generates WAV speech for the selected question. Open the response URL in a browser or audio player.
+ *     security: [{ bearerAuth: [] }]
+ *     parameters:
+ *       - in: path
+ *         name: interviewId
+ *         required: true
+ *         schema: { type: string }
+ *       - in: path
+ *         name: questionId
+ *         required: true
+ *         schema: { type: string }
+ *     responses:
+ *       200:
+ *         description: WAV audio
+ *         content: { audio/wav: { schema: { type: string, format: binary } } }
+ */
+router.get("/:interviewId/questions/:questionId/audio", protect, getQuestionAudio);
+
+/**
+ * @swagger
+ * /api/interview/{interviewId}/answer/audio:
+ *   post:
+ *     tags: [Interview]
+ *     summary: Submit a spoken answer
+ *     description: Uploads microphone audio, transcribes it, then evaluates it using the existing report format. Start proctoring first to keep the camera requirement active.
+ *     security: [{ bearerAuth: [] }]
+ *     parameters:
+ *       - in: path
+ *         name: interviewId
+ *         required: true
+ *         schema: { type: string }
+ *     requestBody:
+ *       required: true
+ *       content:
+ *         multipart/form-data:
+ *           schema:
+ *             type: object
+ *             required: [questionId, audio]
+ *             properties:
+ *               questionId: { type: string }
+ *               audio: { type: string, format: binary, description: Microphone recording }
+ *     responses:
+ *       200: { description: Voice answer saved or interview completed }
+ */
+router.post("/:interviewId/answer/audio", protect, mediaUpload.single("audio"), submitMediaAnswer);
+
+/**
+ * @swagger
+ * /api/interview/{interviewId}/voice-feedback:
+ *   post:
+ *     tags: [Interview]
+ *     summary: Play an automated voice retry prompt
+ *     description: Returns spoken feedback when an answer recording is unclear, then the client starts recording again.
+ *     security: [{ bearerAuth: [] }]
+ *     parameters:
+ *       - in: path
+ *         name: interviewId
+ *         required: true
+ *         schema: { type: string }
+ *     responses:
+ *       200: { description: WAV voice feedback }
+ */
+router.post("/:interviewId/voice-feedback", protect, getVoiceFeedback);
 
 /**
  * @swagger

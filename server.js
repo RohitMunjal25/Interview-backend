@@ -1,6 +1,7 @@
 const express = require("express");
 const cors = require("cors");
 const dotenv = require("dotenv");
+const path = require("path");
 
 dotenv.config();
 
@@ -29,6 +30,8 @@ app.use(
     extended: true,
   })
 );
+
+app.use(express.static(path.join(__dirname, "public")));
 
 
 // =====================================
@@ -109,11 +112,18 @@ const swaggerAuth = (req, res, next) => {
 // SWAGGER DOCUMENTATION
 // =====================================
 
+// Keep credentials in production, while allowing local Swagger "Try it out"
+// without a second browser-login step. Set SWAGGER_AUTH_ENABLED=true to
+// require Basic auth locally as well.
+const requireSwaggerAuth =
+  process.env.SWAGGER_AUTH_ENABLED === "true" ||
+  (process.env.NODE_ENV === "production" && swaggerUsername && swaggerPassword);
+
 app.use(
   "/api-docs",
-  swaggerAuth,
+  ...(requireSwaggerAuth ? [swaggerAuth] : []),
   swaggerUi.serve,
-  swaggerUi.setup(swaggerSpec)
+  swaggerUi.setup(swaggerSpec, { explorer: true })
 );
 
 

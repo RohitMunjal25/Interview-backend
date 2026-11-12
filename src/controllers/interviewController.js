@@ -2,6 +2,7 @@ const mongoose = require("mongoose");
 const Interview = require("../models/Interview");
 const {
   generateInterviewQuestions,
+  generateJobRoleSuggestions,
   generateFinalReport,
 } = require("../services/geminiService");
 
@@ -13,6 +14,15 @@ const { PDFParse } = require("pdf-parse");
 const mammoth = require("mammoth");
 const User = require("../models/User");
 const cloudinary = require("../config/cloudinary");
+const { synthesizeQuestion, transcribeAudio } = require("../services/speechService");
+
+const uploadBuffer = (buffer, options) => new Promise((resolve, reject) => {
+  const stream = cloudinary.uploader.upload_stream(options, (error, result) => {
+    if (error) return reject(error);
+    resolve(result);
+  });
+  stream.end(buffer);
+});
 
 // Interview data is persisted in MongoDB from the moment questions are generated.
 // Incomplete/terminated records are automatically removed after 24 hours by the
@@ -24,13 +34,6 @@ const cloudinary = require("../config/cloudinary");
 const uploadResume = async (req, res) => {
   try {
     const { jobRole } = req.body;
-
-    if (!jobRole) {
-      return res.status(400).json({
-        success: false,
-        message: "Job role is required",
-      });
-    }
 
     if (!req.file) {
       return res.status(400).json({
@@ -109,7 +112,7 @@ const uploadResume = async (req, res) => {
         "Resume uploaded and parsed successfully",
 
       data: {
-        jobRole,
+        jobRole: jobRole || null,
         fileName: file.originalname,
         resumeText,
         textLength: resumeText.length,
@@ -130,6 +133,23 @@ const uploadResume = async (req, res) => {
   }
 };
 
+// =====================================
+// RESUME-BASED JOB ROLES
+// =====================================
+const suggestJobRoles = async (req, res) => {
+  try {
+    const user = await User.findById(req.user._id);
+    if (!user?.resume?.extractedText) {
+      return res.status(400).json({ success: false, message: "Please upload your resume first" });
+    }
+    const roles = await generateJobRoleSuggestions(user.resume.extractedText);
+    return res.status(200).json({ success: true, data: { roles } });
+  } catch (error) {
+    console.error("Job Role Suggestions Error:", error);
+    return res.status(500).json({ success: false, message: "Failed to generate job role suggestions" });
+  }
+};
+
 
 // =====================================
 // GENERATE QUESTIONS
@@ -137,7 +157,7 @@ const uploadResume = async (req, res) => {
 
 const generateQuestions = async (req, res) => {
   try {
-    const { jobRole, difficulty, questionCount } = req.body;
+    const { jobRole, difficulty, questionCount, interviewType = "text" } = req.body;
 
     if (!jobRole) {
       return res.status(400).json({
@@ -157,6 +177,13 @@ const generateQuestions = async (req, res) => {
       return res.status(400).json({
         success: false,
         message: "Question count is required",
+      });
+    }
+
+    if (!["text", "audio"].includes(interviewType)) {
+      return res.status(400).json({
+        success: false,
+        message: "Interview type must be text or audio",
       });
     }
 
@@ -202,6 +229,7 @@ const generateQuestions = async (req, res) => {
       jobRole,
       difficulty,
       questionCount,
+      interviewType,
       resumeText: user.resume.extractedText,
       questions: sessionQuestions,
       status: "in_progress",
@@ -215,8 +243,12 @@ const generateQuestions = async (req, res) => {
       data: {
         interviewId: interview._id,
         jobRole,
+        interviewType,
         totalQuestions: sessionQuestions.length,
-        questions: sessionQuestions,
+        questions: sessionQuestions.map((question) => ({
+          ...question,
+          audioUrl: `/api/interview/${interview._id}/questions/${question._id}/audio`,
+        })),
       },
     });
 
@@ -242,7 +274,7 @@ const generateQuestions = async (req, res) => {
 const submitAnswer = async (req, res) => {
   try {
     const { interviewId } = req.params;
-    const { questionId, answer } = req.body;
+    const { questionId, answer, answerMode, answerAudioUrl, answerVideoUrl } = req.body;
 
     if (!questionId) {
       return res.status(400).json({
@@ -297,7 +329,9 @@ const submitAnswer = async (req, res) => {
 
     // Save every answer immediately so refresh/reconnect does not lose progress.
     question.answer = answer.trim();
-    question.answerMode = "text";
+    question.answerMode = answerMode === "voice" ? "voice" : "text";
+    question.answerAudioUrl = answerAudioUrl || null;
+    question.answerVideoUrl = answerVideoUrl || null;
     await interview.save();
 
     // Find next unanswered question
@@ -345,6 +379,9 @@ const submitAnswer = async (req, res) => {
 
             type:
               nextQuestion.type,
+            ...(interview.interviewType === "audio" && {
+              audioUrl: `/api/interview/${interview._id}/questions/${nextQuestion._id}/audio`,
+            }),
           },
         },
       });
@@ -537,6 +574,102 @@ const submitAnswer = async (req, res) => {
 
       error: error.message,
     });
+  }
+};
+
+// =====================================
+// QUESTION AUDIO (TTS)
+// =====================================
+const getQuestionAudio = async (req, res) => {
+  try {
+    const interview = await Interview.findOne({ _id: req.params.interviewId, user: req.user._id });
+    if (!interview) return res.status(404).json({ success: false, message: "Interview not found" });
+    if (interview.status !== "in_progress") return res.status(400).json({ success: false, message: "Interview is no longer active" });
+    const question = interview.questions.id(req.params.questionId);
+    if (!question) return res.status(404).json({ success: false, message: "Question not found" });
+
+    const wav = await synthesizeQuestion(question.question);
+    res.setHeader("Content-Type", "audio/wav");
+    res.setHeader("Content-Disposition", `inline; filename="question-${question._id}.wav"`);
+    res.setHeader("Cache-Control", "private, max-age=3600");
+    return res.status(200).send(wav);
+  } catch (error) {
+    console.error("Question Audio Error:", error);
+    return res.status(503).json({ success: false, message: "Question audio is temporarily unavailable" });
+  }
+};
+
+// =====================================
+// VOICE ANSWER
+// =====================================
+const submitMediaAnswer = async (req, res) => {
+  try {
+    const { interviewId } = req.params;
+    const { questionId } = req.body;
+    const audio = req.file;
+    if (!questionId || !audio) {
+      return res.status(400).json({ success: false, message: "questionId and audio are required" });
+    }
+
+    const interview = await Interview.findOne({ _id: interviewId, user: req.user._id });
+    if (!interview) return res.status(404).json({ success: false, message: "Interview not found" });
+    if (interview.status !== "in_progress" || !interview.proctoring?.startedAt) {
+      return res.status(400).json({ success: false, message: "Start the camera-monitored interview before answering" });
+    }
+
+    let voiceResult;
+    try {
+      voiceResult = await transcribeAudio(audio.buffer, audio.mimetype);
+    } catch (transcriptionError) {
+      console.error("Local Whisper transcription failed:", transcriptionError.message);
+      voiceResult = {
+        transcript: "",
+        isClear: false,
+        retryMessage: "I could not process your answer. Please speak clearly and repeat it.",
+      };
+    }
+    if (!voiceResult.isClear) {
+      return res.status(422).json({
+        success: false,
+        code: "VOICE_UNCLEAR",
+        message: "Voice answer was not clear enough",
+        data: { retryMessage: voiceResult.retryMessage },
+      });
+    }
+    let audioUpload = null;
+    try {
+      audioUpload = await uploadBuffer(audio.buffer, { folder: "ai-interview/answers", resource_type: "video" });
+    } catch (uploadError) {
+      // The evaluation must not fail merely because retaining the evidence file failed.
+      console.error("Answer audio upload failed:", uploadError.message);
+    }
+
+    req.body = {
+      questionId,
+      answer: voiceResult.transcript,
+      answerMode: "voice",
+      answerAudioUrl: audioUpload?.secure_url || null,
+      answerVideoUrl: null,
+    };
+    return submitAnswer(req, res);
+  } catch (error) {
+    console.error("Media Answer Error:", error);
+    return res.status(500).json({ success: false, message: "Failed to process voice answer" });
+  }
+};
+
+const getVoiceFeedback = async (req, res) => {
+  try {
+    const interview = await Interview.findOne({ _id: req.params.interviewId, user: req.user._id, status: "in_progress" });
+    if (!interview) return res.status(404).json({ success: false, message: "Interview not found" });
+    const retryText = "I could not hear your answer clearly. Please speak a little louder and repeat your answer.";
+    const wav = await synthesizeQuestion(retryText);
+    res.setHeader("Content-Type", "audio/wav");
+    res.setHeader("Cache-Control", "no-store");
+    return res.status(200).send(wav);
+  } catch (error) {
+    console.error("Voice Feedback Error:", error);
+    return res.status(503).json({ success: false, message: "Voice feedback is temporarily unavailable" });
   }
 };
 
@@ -809,10 +942,14 @@ const downloadInterviewReport = async (req, res) => {
 
 module.exports = {
   uploadResume,
+  suggestJobRoles,
   generateQuestions,
   submitAnswer,
   downloadInterviewReport,
   getInterviewReport,
   startProctoring,
   terminateInterview,
+  getQuestionAudio,
+  submitMediaAnswer,
+  getVoiceFeedback,
 };

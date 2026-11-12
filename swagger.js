@@ -13,6 +13,10 @@ const options = {
 
     servers: [
       {
+        url: "http://localhost:5000",
+        description: "Local development (Swagger Try it out)",
+      },
+      {
         url: "https://anytime-leone-calendars-respond.trycloudflare.com",
         description: "Production / Cloudflare Quick Tunnel",
       },

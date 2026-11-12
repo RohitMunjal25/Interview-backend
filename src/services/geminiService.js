@@ -89,6 +89,7 @@ const callGemini = async (prompt, mode) => {
   const ai = await getGeminiClient();
 
   const isQuestions = mode === "questions";
+  const isRoles = mode === "roles";
 
   const response = await ai.models.generateContent({
     model: isQuestions
@@ -113,6 +114,19 @@ const callGemini = async (prompt, mode) => {
               },
               required: ["question", "type"],
             },
+          },
+        }
+      : isRoles
+      ? {
+          responseMimeType: "application/json",
+          thinkingConfig: { thinkingLevel: "minimal" },
+          maxOutputTokens: 512,
+          responseSchema: {
+            type: "object",
+            properties: {
+              roles: { type: "array", items: { type: "string" } },
+            },
+            required: ["roles"],
           },
         }
       : {
@@ -338,6 +352,26 @@ Return JSON in this exact shape:
 };
 
 // =====================================
+// RESUME-BASED JOB ROLE SUGGESTIONS
+// =====================================
+const generateJobRoleSuggestions = async (resumeText) => {
+  const prompt = `
+Read this candidate resume and suggest 3 to 6 realistic job titles that best match
+the candidate's actual skills and experience. Do not invent qualifications.
+
+Resume:
+${resumeText}
+
+Return ONLY valid JSON in this exact shape:
+{ "roles": ["Role one", "Role two"] }
+`;
+  const result = await runWithFallback(prompt, "roles");
+  const roles = Array.isArray(result?.roles) ? result.roles : [];
+  if (!roles.length) throw new Error("AI returned no job role suggestions");
+  return roles.slice(0, 6);
+};
+
+// =====================================
 // FINAL REPORT
 // =====================================
 
@@ -417,5 +451,6 @@ Return ONLY valid JSON in exactly this shape:
 
 module.exports = {
   generateInterviewQuestions,
+  generateJobRoleSuggestions,
   generateFinalReport,
 };
