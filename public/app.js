@@ -1,4 +1,4 @@
-const state = { token: localStorage.getItem("aiInterviewToken"), interview: null, question: null, stream: null, recorder: null, recording: null, audioUrl: null, tabGuard: false, resumeUploaded: false, audioContext: null, silenceTimer: null, listenTimer: null, animationFrame: null, serverTtsUnavailable: false };
+const state = { token: localStorage.getItem("aiInterviewToken"), interview: null, question: null, stream: null, recorder: null, recording: null, audioUrl: null, tabGuard: false, resumeUploaded: false, audioContext: null, silenceTimer: null, listenTimer: null, animationFrame: null, serverTtsUnavailable: false, questionTurn: 0, answerSubmitting: false };
 const $ = (id) => document.getElementById(id);
 
 function message(text, isError = false) {
@@ -97,21 +97,29 @@ $("setupForm").addEventListener("submit", async (event) => {
   } catch (error) { message(error.message || "Camera permission is required.", true); }
 });
 
-async function loadQuestionAudio(url) {
+async function loadQuestionAudio(url, turn) {
   try {
     if (state.serverTtsUnavailable) throw new Error("Using browser speech fallback");
     if (state.audioUrl) URL.revokeObjectURL(state.audioUrl);
     const response = await fetch(url, { headers: { Authorization: `Bearer ${state.token}` } });
     if (!response.ok) throw new Error("Server speech is unavailable");
+    if (turn !== state.questionTurn) return;
     state.audioUrl = URL.createObjectURL(await response.blob());
+    if (turn !== state.questionTurn) return;
     $("questionAudio").src = state.audioUrl;
     $("recordingStatus").textContent = "AI is speaking…";
-    $("questionAudio").onended = () => startRecording();
+    $("questionAudio").onended = () => startRecording(turn);
     await $("questionAudio").play();
   } catch (_) {
+    if (turn !== state.questionTurn) return;
     state.serverTtsUnavailable = true;
+    const player = $("questionAudio");
+    player.onended = null;
+    player.pause();
+    player.removeAttribute("src");
+    player.load();
     // Do not block the interview when the paid/free server TTS quota is exhausted.
-    speakWithBrowser(state.question.question, () => startRecording());
+    speakWithBrowser(state.question.question, () => startRecording(turn));
   }
 }
 
@@ -134,7 +142,7 @@ function speakWithBrowser(text, onEnd) {
   synth.speak(utterance);
 }
 
-async function playRetryPrompt(retryMessage) {
+async function playRetryPrompt(retryMessage, turn = state.questionTurn) {
   $("recordingStatus").textContent = "AI is asking you to repeat your answer…";
   try {
     const response = await fetch(`/api/interview/${state.interview.interviewId}/voice-feedback`, {
@@ -144,16 +152,21 @@ async function playRetryPrompt(retryMessage) {
     if (state.audioUrl) URL.revokeObjectURL(state.audioUrl);
     state.audioUrl = URL.createObjectURL(await response.blob());
     const player = $("questionAudio"); player.src = state.audioUrl;
-    player.onended = () => startRecording();
+    player.onended = () => startRecording(turn);
     await player.play();
   } catch (_) {
     state.serverTtsUnavailable = true;
     // Browser speech is a reliable fallback when the server TTS provider is unavailable.
-    speakWithBrowser(retryMessage || "I could not hear your answer clearly. Please repeat your answer.", () => startRecording());
+    speakWithBrowser(retryMessage || "I could not hear your answer clearly. Please repeat your answer.", () => startRecording(turn));
   }
 }
 
 function showQuestion(question) {
+  state.questionTurn += 1;
+  const turn = state.questionTurn;
+  const player = $("questionAudio");
+  player.onended = null;
+  player.pause();
   state.question = question;
   $("questionText").textContent = question.question;
   $("progress").textContent = `Question ${state.interview.answered + 1} of ${state.interview.totalQuestions}`;
@@ -161,7 +174,7 @@ function showQuestion(question) {
   const audioMode = state.interview.interviewType === "audio";
   $("textAnswer").hidden = audioMode; $("audioAnswer").hidden = !audioMode;
   $("answerText").value = ""; $("answerPreview").hidden = true; state.recording = null;
-  if (audioMode) loadQuestionAudio(question.audioUrl).catch((error) => message(error.message, true));
+  if (audioMode) loadQuestionAudio(question.audioUrl, turn).catch((error) => message(error.message, true));
   else { $("questionAudio").removeAttribute("src"); }
 }
 
@@ -178,23 +191,26 @@ $("sendText").onclick = async () => {
   try { message("Saving answer..."); await submitResult(await api(`/api/interview/${state.interview.interviewId}/answer`, { method: "POST", json: { questionId: state.question._id || state.question.questionId, answer } })); } catch (error) { message(error.message, true); }
 };
 
-function startRecording() {
+function startRecording(turn) {
   try {
+    if (turn !== state.questionTurn) return;
     if (state.recorder?.state === "recording") return;
     if (!window.MediaRecorder) throw new Error("Audio recording is not supported in this browser. Use Chrome or Edge.");
     const audioTracks = state.stream?.getAudioTracks() || [];
     if (!audioTracks.length) throw new Error("Microphone is not available. Allow microphone permission and try again.");
     const mimeType = ["audio/webm;codecs=opus", "audio/webm", "audio/mp4"].find((type) => MediaRecorder.isTypeSupported(type));
     const chunks = [];
+    const questionId = state.question._id || state.question.questionId;
     state.recorder = new MediaRecorder(new MediaStream(audioTracks), mimeType ? { mimeType } : undefined);
     state.recorder.ondataavailable = (event) => event.data.size && chunks.push(event.data);
     state.recorder.onerror = () => message("Recording failed. Please allow microphone access and record again.", true);
     state.recorder.onstop = () => {
       stopSilenceDetection();
       state.recording = new Blob(chunks, { type: state.recorder.mimeType || "audio/webm" });
+      if (turn !== state.questionTurn) return;
       if (!state.recording.size) return retryFromBrowser("No voice was detected. Please repeat your answer.");
       $("recordingStatus").textContent = "Answer captured. AI is evaluating…";
-      submitAudio();
+      submitAudio(questionId, turn);
     };
     state.recorder.start();
     $("recordingStatus").textContent = "Listening… answer naturally. I will submit after 2.5 seconds of silence.";
@@ -236,25 +252,28 @@ function stopSilenceDetection() {
   state.audioContext?.close(); state.audioContext = null;
 }
 
-async function submitAudio() {
+async function submitAudio(questionId, turn) {
   if (!state.recording) return;
-  try { message("Transcribing and evaluating your answer..."); const body = new FormData(); body.append("questionId", state.question._id || state.question.questionId); body.append("audio", state.recording, "answer.webm"); await submitResult(await api(`/api/interview/${state.interview.interviewId}/answer/audio`, { method: "POST", body })); }
+  if (turn !== state.questionTurn || state.answerSubmitting) return;
+  state.answerSubmitting = true;
+  try { message("Transcribing and evaluating your answer..."); const body = new FormData(); body.append("questionId", questionId); body.append("audio", state.recording, "answer.webm"); const result = await api(`/api/interview/${state.interview.interviewId}/answer/audio`, { method: "POST", body }); if (turn === state.questionTurn) await submitResult(result); }
   catch (error) {
+    if (turn !== state.questionTurn) return;
     if (error.status === 422 && error.payload?.code === "VOICE_UNCLEAR") {
       message("Voice was unclear. AI will ask you to repeat.", true);
-      return playRetryPrompt(error.payload.data?.retryMessage);
+      return playRetryPrompt(error.payload.data?.retryMessage, turn);
     }
     if (error.status === 503 && error.payload?.code === "LOCAL_TRANSCRIPTION_UNAVAILABLE") {
       message("Local transcription had a temporary issue. Retrying your answer.", true);
-      return retryFromBrowser("There was a temporary technical issue. Please repeat your answer.");
+      return retryFromBrowser("There was a temporary technical issue. Please repeat your answer.", turn);
     }
     message(error.message || "Voice transcription is temporarily unavailable. Please try again.", true);
-  }
+  } finally { state.answerSubmitting = false; }
 }
 
-function retryFromBrowser(text) {
+function retryFromBrowser(text, turn = state.questionTurn) {
   message("Let’s try that answer again.", true);
-  return playRetryPrompt(text);
+  return playRetryPrompt(text, turn);
 }
 
 async function tabViolation() {
