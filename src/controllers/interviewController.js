@@ -600,9 +600,8 @@ const getQuestionAudio = async (req, res) => {
   }
 };
 
-// =====================================
-// VOICE ANSWER
-// =====================================
+// Direct voice submission is retained for Swagger and API clients that do not
+// need the frontend transcript-review screen.
 const submitMediaAnswer = async (req, res) => {
   try {
     const { interviewId } = req.params;
@@ -615,47 +614,18 @@ const submitMediaAnswer = async (req, res) => {
     const interview = await Interview.findOne({ _id: interviewId, user: req.user._id });
     if (!interview) return res.status(404).json({ success: false, message: "Interview not found" });
     if (interview.status !== "in_progress" || !interview.proctoring?.startedAt) {
-      return res.status(400).json({ success: false, message: "Start the camera-monitored interview before answering" });
+      return res.status(400).json({ success: false, message: "Interview is not active" });
     }
 
-    let voiceResult;
-    try {
-      voiceResult = await transcribeAudio(audio.buffer, audio.mimetype);
-    } catch (transcriptionError) {
-      console.error("Local Whisper transcription failed:", transcriptionError.message);
-      return res.status(503).json({
-        success: false,
-        code: "LOCAL_TRANSCRIPTION_UNAVAILABLE",
-        message: "Local voice transcription is unavailable. Please try again in a moment.",
-      });
-    }
+    const voiceResult = await transcribeAudio(audio.buffer, audio.mimetype);
     if (!voiceResult.isClear) {
-      return res.status(422).json({
-        success: false,
-        code: "VOICE_UNCLEAR",
-        message: "Voice answer was not clear enough",
-        data: { retryMessage: voiceResult.retryMessage },
-      });
+      return res.status(422).json({ success: false, code: "VOICE_UNCLEAR", message: "No clear speech was detected" });
     }
-    let audioUpload = null;
-    try {
-      audioUpload = await uploadBuffer(audio.buffer, { folder: "ai-interview/answers", resource_type: "video" });
-    } catch (uploadError) {
-      // The evaluation must not fail merely because retaining the evidence file failed.
-      console.error("Answer audio upload failed:", uploadError.message);
-    }
-
-    req.body = {
-      questionId,
-      answer: voiceResult.transcript,
-      answerMode: "voice",
-      answerAudioUrl: audioUpload?.secure_url || null,
-      answerVideoUrl: null,
-    };
+    req.body = { questionId, answer: voiceResult.transcript, answerMode: "voice" };
     return submitAnswer(req, res);
   } catch (error) {
-    console.error("Media Answer Error:", error);
-    return res.status(500).json({ success: false, message: "Failed to process voice answer" });
+    console.error("Direct Media Answer Error:", error);
+    return res.status(503).json({ success: false, message: "Voice transcription is temporarily unavailable" });
   }
 };
 
@@ -707,21 +677,6 @@ const transcribeMediaAnswer = async (req, res) => {
   } catch (error) {
     console.error("Voice Preview Error:", error);
     return res.status(500).json({ success: false, message: "Failed to transcribe voice answer" });
-  }
-};
-
-const getVoiceFeedback = async (req, res) => {
-  try {
-    const interview = await Interview.findOne({ _id: req.params.interviewId, user: req.user._id, status: "in_progress" });
-    if (!interview) return res.status(404).json({ success: false, message: "Interview not found" });
-    const retryText = "I could not hear your answer clearly. Please speak a little louder and repeat your answer.";
-    const wav = await synthesizeQuestion(retryText);
-    res.setHeader("Content-Type", "audio/wav");
-    res.setHeader("Cache-Control", "no-store");
-    return res.status(200).send(wav);
-  } catch (error) {
-    console.error("Voice Feedback Error:", error);
-    return res.status(503).json({ success: false, message: "Voice feedback is temporarily unavailable" });
   }
 };
 
@@ -1004,5 +959,4 @@ module.exports = {
   getQuestionAudio,
   submitMediaAnswer,
   transcribeMediaAnswer,
-  getVoiceFeedback,
 };

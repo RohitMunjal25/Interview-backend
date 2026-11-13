@@ -44,6 +44,7 @@ const formatIndiaDateTime = (date) => {
 
 const generateInterviewReport = async (interview) => {
   const fileName = `interview-report-${interview._id}`;
+  const pdfPublicId = `${fileName}.pdf`;
 
   let user = interview.user || {};
 
@@ -81,10 +82,16 @@ const generateInterviewReport = async (interview) => {
       try {
         const pdfBuffer = Buffer.concat(chunks);
 
+        if (!pdfBuffer.subarray(0, 4).equals(Buffer.from("%PDF"))) {
+          throw new Error("Report generation did not produce a valid PDF file");
+        }
+
         const uploadStream = cloudinary.uploader.upload_stream(
           {
             folder: "ai-interview/reports",
-            public_id: fileName,
+            // Raw Cloudinary assets must include their file extension in the
+            // public ID; otherwise the secure URL has no .pdf suffix.
+            public_id: pdfPublicId,
             resource_type: "raw",
           },
           (error, result) => {
@@ -93,7 +100,7 @@ const generateInterviewReport = async (interview) => {
             }
 
             resolve({
-              fileName: `${fileName}.pdf`,
+              fileName: pdfPublicId,
               reportUrl: result.secure_url,
               publicId: result.public_id,
             });

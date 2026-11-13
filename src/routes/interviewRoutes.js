@@ -32,7 +32,6 @@ const {
   getQuestionAudio,
   submitMediaAnswer,
   transcribeMediaAnswer,
-  getVoiceFeedback,
 } = require("../controllers/interviewController");
 
 const router = express.Router();
@@ -246,6 +245,32 @@ router.get("/:interviewId/questions/:questionId/audio", protect, getQuestionAudi
  *     responses:
  *       200: { description: Voice answer saved or interview completed }
  */
+/**
+ * @swagger
+ * /api/interview/{interviewId}/answer/audio:
+ *   post:
+ *     tags: [Interview]
+ *     summary: Submit a recorded answer directly
+ *     description: Transcribes and submits the audio answer in one call. Use the transcribe endpoint when the candidate should review text first.
+ *     security: [{ bearerAuth: [] }]
+ *     parameters:
+ *       - in: path
+ *         name: interviewId
+ *         required: true
+ *         schema: { type: string }
+ *     requestBody:
+ *       required: true
+ *       content:
+ *         multipart/form-data:
+ *           schema:
+ *             type: object
+ *             required: [questionId, audio]
+ *             properties:
+ *               questionId: { type: string }
+ *               audio: { type: string, format: binary }
+ *     responses:
+ *       200: { description: Answer submitted }
+ */
 router.post("/:interviewId/answer/audio", protect, mediaUpload.single("audio"), submitMediaAnswer);
 
 /**
@@ -276,23 +301,6 @@ router.post("/:interviewId/answer/audio", protect, mediaUpload.single("audio"), 
  */
 router.post("/:interviewId/answer/audio/transcribe", protect, mediaUpload.single("audio"), transcribeMediaAnswer);
 
-/**
- * @swagger
- * /api/interview/{interviewId}/voice-feedback:
- *   post:
- *     tags: [Interview]
- *     summary: Play an automated voice retry prompt
- *     description: Returns spoken feedback when an answer recording is unclear, then the client starts recording again.
- *     security: [{ bearerAuth: [] }]
- *     parameters:
- *       - in: path
- *         name: interviewId
- *         required: true
- *         schema: { type: string }
- *     responses:
- *       200: { description: WAV voice feedback }
- */
-router.post("/:interviewId/voice-feedback", protect, getVoiceFeedback);
 
 /**
  * @swagger

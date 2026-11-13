@@ -290,8 +290,30 @@ function showReport(data) {
   state.tabGuard = false; state.stream?.getTracks().forEach((track) => track.stop());
   $("interviewCard").hidden = true; $("reportCard").hidden = false;
   const rows = (data.questionEvaluations || []).map((item, index) => `<div class="report-item"><strong>Q${index + 1}: ${item.score}/100</strong><br>${escapeHtml(item.feedback || "")}</div>`).join("");
-  $("report").innerHTML = `<p><strong>Overall score:</strong> ${data.overallScore}/100</p><p><strong>${escapeHtml(data.performanceLevel || "")}</strong></p><p>${escapeHtml(data.summary || "")}</p><h3>Question feedback</h3>${rows}<p>${data.reportUrl ? `<a href="${data.reportUrl}" target="_blank">Download PDF report</a>` : ""}</p>`;
+  $("report").innerHTML = `<p><strong>Overall score:</strong> ${data.overallScore}/100</p><p><strong>${escapeHtml(data.performanceLevel || "")}</strong></p><p>${escapeHtml(data.summary || "")}</p><h3>Question feedback</h3>${rows}<p>${data.reportUrl ? '<button id="downloadReport">Download PDF report</button>' : ""}</p>`;
+  const downloadButton = $("downloadReport");
+  if (downloadButton) downloadButton.onclick = () => downloadReport(data.interviewId);
   message("Interview completed successfully.");
+}
+
+async function downloadReport(interviewId) {
+  try {
+    message("Preparing PDF download...");
+    const response = await fetch(`/api/interview/${interviewId}/report/download`, {
+      headers: { Authorization: `Bearer ${state.token}` },
+    });
+    if (!response.ok) {
+      const error = await response.json().catch(() => ({}));
+      throw new Error(error.message || "Unable to download PDF report");
+    }
+    const url = URL.createObjectURL(await response.blob());
+    const link = document.createElement("a");
+    link.href = url;
+    link.download = `interview-report-${interviewId}.pdf`;
+    document.body.appendChild(link); link.click(); link.remove();
+    URL.revokeObjectURL(url);
+    message("PDF report downloaded.");
+  } catch (error) { message(error.message, true); }
 }
 function escapeHtml(value) { const el = document.createElement("div"); el.textContent = value; return el.innerHTML; }
 setLoggedIn(Boolean(state.token));
