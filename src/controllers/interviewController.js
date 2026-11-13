@@ -24,6 +24,9 @@ const uploadBuffer = (buffer, options) => new Promise((resolve, reject) => {
   stream.end(buffer);
 });
 
+const getAudioUpload = (req) =>
+  req.file || req.files?.audio?.[0] || req.files?.file?.[0] || null;
+
 // Interview data is persisted in MongoDB from the moment questions are generated.
 // Incomplete/terminated records are automatically removed after 24 hours by the
 // TTL index defined in the Interview model.
@@ -606,7 +609,7 @@ const submitMediaAnswer = async (req, res) => {
   try {
     const { interviewId } = req.params;
     const { questionId } = req.body;
-    const audio = req.file;
+    const audio = getAudioUpload(req);
     if (!questionId || !audio) {
       return res.status(400).json({ success: false, message: "questionId and audio are required" });
     }
@@ -636,7 +639,7 @@ const transcribeMediaAnswer = async (req, res) => {
   try {
     const { interviewId } = req.params;
     const { questionId } = req.body;
-    const audio = req.file;
+    const audio = getAudioUpload(req);
     if (!questionId || !audio) {
       return res.status(400).json({ success: false, message: "questionId and audio are required" });
     }

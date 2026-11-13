@@ -17,7 +17,30 @@ const withAudioTimeout = (promise, provider) => new Promise((resolve, reject) =>
 let localWhisperProcess = null;
 let localWhisperBuffer = "";
 let localWhisperSequence = 0;
+let localWhisperSetupPromise = null;
 const localWhisperPending = new Map();
+
+const getPythonCommand = () => process.env.PYTHON_PATH || (process.platform === "win32" ? "python" : "python3");
+
+const prepareLocalWhisper = () => {
+  if (process.env.LOCAL_WHISPER_AUTO_SETUP === "false") return Promise.resolve();
+  if (localWhisperSetupPromise) return localWhisperSetupPromise;
+
+  const setupScript = path.join(__dirname, "setupLocalWhisper.py");
+  localWhisperSetupPromise = new Promise((resolve, reject) => {
+    const setup = spawn(getPythonCommand(), [setupScript], { stdio: ["ignore", "pipe", "pipe"], windowsHide: true });
+    let output = "";
+    setup.stdout.on("data", (chunk) => { output += chunk; console.log(`[Local Whisper] ${chunk.toString().trim()}`); });
+    setup.stderr.on("data", (chunk) => console.error(`[Local Whisper] ${chunk.toString().trim()}`));
+    setup.on("error", (error) => reject(error));
+    setup.on("exit", (code) => code === 0 ? resolve() : reject(new Error(output || `Local Whisper setup exited with code ${code}`)));
+  }).catch((error) => {
+    // Do not permanently cache a failed setup: a later audio request can retry.
+    localWhisperSetupPromise = null;
+    throw error;
+  });
+  return localWhisperSetupPromise;
+};
 
 const rejectLocalWhisperPending = (error) => {
   for (const { reject } of localWhisperPending.values()) reject(error);
@@ -28,7 +51,7 @@ const getLocalWhisperWorker = () => {
   if (localWhisperProcess && !localWhisperProcess.killed) return localWhisperProcess;
 
   const scriptPath = path.join(__dirname, "localTranscription.py");
-  localWhisperProcess = spawn(process.env.PYTHON_PATH || "python", [scriptPath, "--server"], {
+  localWhisperProcess = spawn(getPythonCommand(), [scriptPath, "--server"], {
     stdio: ["pipe", "pipe", "pipe"],
     windowsHide: true,
   });
@@ -179,6 +202,7 @@ const transcribeLocally = async (buffer, mimeType) => {
   const extension = mimeType?.includes("mp4") ? ".mp4" : ".webm";
   const audioPath = path.join(temporaryDirectory, `answer${extension}`);
   try {
+    await prepareLocalWhisper();
     await fs.writeFile(audioPath, buffer);
     const parsed = await transcribeWithLocalWhisper(audioPath);
     if (parsed.error) throw new Error(parsed.error);
@@ -189,4 +213,4 @@ const transcribeLocally = async (buffer, mimeType) => {
   }
 };
 
-module.exports = { synthesizeQuestion, transcribeAudio };
+module.exports = { synthesizeQuestion, transcribeAudio, prepareLocalWhisper };

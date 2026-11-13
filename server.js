@@ -7,6 +7,7 @@ dotenv.config();
 
 const swaggerUi = require("swagger-ui-express");
 const swaggerSpec = require("./swagger");
+const { prepareLocalWhisper } = require("./src/services/speechService");
 
 const connectDB = require("./src/config/db");
 
@@ -178,6 +179,13 @@ app.use((req, res) => {
 app.use((err, req, res, next) => {
   console.error("Global Error:", err);
 
+  if (err.name === "MulterError" || err.message === "Unexpected field") {
+    return res.status(400).json({
+      success: false,
+      message: "Invalid upload field or file size. Use the audio field for voice recordings.",
+    });
+  }
+
   res.status(500).json({
     success: false,
     message: "Internal server error",
@@ -199,4 +207,10 @@ app.listen(PORT, () => {
   console.log(
     `Swagger Docs: http://localhost:${PORT}/api-docs`
   );
+
+  // Installs/caches the local fallback in the background. The API remains
+  // available while the first-time model download is in progress.
+  prepareLocalWhisper().catch((error) => {
+    console.error("Local Whisper automatic setup failed:", error.message);
+  });
 });

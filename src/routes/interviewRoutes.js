@@ -20,6 +20,11 @@ const mediaUpload = multer({
   },
 });
 
+const audioFields = mediaUpload.fields([
+  { name: "audio", maxCount: 1 },
+  { name: "file", maxCount: 1 },
+]);
+
 const {
   uploadResume,
   suggestJobRoles,
@@ -268,10 +273,11 @@ router.get("/:interviewId/questions/:questionId/audio", protect, getQuestionAudi
  *             properties:
  *               questionId: { type: string }
  *               audio: { type: string, format: binary }
+ *               file: { type: string, format: binary, description: Alternative field name accepted for external clients }
  *     responses:
  *       200: { description: Answer submitted }
  */
-router.post("/:interviewId/answer/audio", protect, mediaUpload.single("audio"), submitMediaAnswer);
+router.post("/:interviewId/answer/audio", protect, audioFields, submitMediaAnswer);
 
 /**
  * @swagger
@@ -296,10 +302,11 @@ router.post("/:interviewId/answer/audio", protect, mediaUpload.single("audio"), 
  *             properties:
  *               questionId: { type: string }
  *               audio: { type: string, format: binary }
+ *               file: { type: string, format: binary, description: Alternative field name accepted for external clients }
  *     responses:
  *       200: { description: Editable transcript returned }
  */
-router.post("/:interviewId/answer/audio/transcribe", protect, mediaUpload.single("audio"), transcribeMediaAnswer);
+router.post("/:interviewId/answer/audio/transcribe", protect, audioFields, transcribeMediaAnswer);
 
 
 /**
